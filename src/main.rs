@@ -29,46 +29,76 @@ struct App {
     channels: usize,
     start_time: Option<Instant>,
     // Keep stream and sink alive
-    _stream: OutputStream,
-    _stream_handle: rodio::OutputStreamHandle,
-    sink: Sink,
+    _stream: Option<OutputStream>,
+    _stream_handle: Option<rodio::OutputStreamHandle>,
+    sink: Option<Sink>,
+    // Error handling
+    error_message: Option<String>,
 }
 
 impl App {
-    fn new() -> Result<App, Box<dyn Error>> {
+    fn new() -> App {
         let mut radio_state = ListState::default();
         radio_state.select(Some(3)); // Radio Freedom selected by default
 
-        // Setup Audio
-        let (_stream, _stream_handle) = OutputStream::try_default()?;
-        let sink = Sink::try_new(&_stream_handle)?;
-
-        let mut audio_data = Vec::new();
+        let mut audio_data = vec![vec![0.0; 1024]; 2];
         let mut sample_rate = 44100;
         let mut channels = 2;
+        let mut start_time = None;
+        let mut _stream = None;
+        let mut _stream_handle = None;
+        let mut sink = None;
+        let mut error_message = None;
 
-        if let Ok(file) = File::open("audio.mp3") {
-            let source = Decoder::new(BufReader::new(file))?;
-            sample_rate = source.sample_rate();
-            channels = source.channels() as usize;
+        // Try to initialize audio
+        match OutputStream::try_default() {
+            Ok((stream, stream_handle)) => {
+                match Sink::try_new(&stream_handle) {
+                    Ok(s) => {
+                        _stream = Some(stream);
+                        _stream_handle = Some(stream_handle);
+                        sink = Some(s);
+                    },
+                    Err(e) => error_message = Some(format!("Sink error: {}", e)),
+                }
+            },
+            Err(e) => error_message = Some(format!("Audio init error: {}", e)),
+        }
 
-            // Collect samples for visualization
-            let samples: Vec<f32> = source.convert_samples().collect();
+        // Try to load file if audio initialized
+        if let Some(sink_ref) = &sink {
+            match File::open("audio.mp3") {
+                Ok(file) => {
+                    match Decoder::new(BufReader::new(file)) {
+                        Ok(source) => {
+                             sample_rate = source.sample_rate();
+                             channels = source.channels() as usize;
 
-            // Re-open for playing because iterator was consumed
-             let file = File::open("audio.mp3")?;
-             let source = Decoder::new(BufReader::new(file))?;
-             sink.append(source);
-             sink.play();
+                             let samples: Vec<f32> = source.convert_samples().collect();
 
-            // De-interleave for visualization
-            audio_data = vec![Vec::new(); channels];
-            for (i, sample) in samples.iter().enumerate() {
-                audio_data[i % channels].push(*sample as f64);
+                             // Re-open for playing
+                             if let Ok(file_play) = File::open("audio.mp3") {
+                                 if let Ok(source_play) = Decoder::new(BufReader::new(file_play)) {
+                                     sink_ref.append(source_play);
+                                     sink_ref.play();
+                                     start_time = Some(Instant::now());
+                                 }
+                             }
+
+                             audio_data = vec![Vec::new(); channels];
+                             for (i, sample) in samples.iter().enumerate() {
+                                 audio_data[i % channels].push(*sample as f64);
+                             }
+                        },
+                        Err(e) => error_message = Some(format!("Format error: {}", e)),
+                    }
+                },
+                Err(_) => {
+                    // It's okay if file doesn't exist, just don't play
+                    // But maybe user wants to know?
+                    // error_message = Some("audio.mp3 not found".to_string());
+                }
             }
-        } else {
-            // Placeholder silence if no file
-             audio_data = vec![vec![0.0; 1024]; 2];
         }
 
         let graph_config = GraphConfig {
@@ -83,7 +113,7 @@ impl App {
             ..Default::default()
         };
 
-        Ok(App {
+        App {
             current_tab: 4, // RADIO tab
             radio_state,
             radio_stations: vec![
@@ -103,11 +133,12 @@ impl App {
             audio_data,
             sample_rate,
             channels,
-            start_time: Some(Instant::now()),
+            start_time,
             _stream,
             _stream_handle,
             sink,
-        })
+            error_message,
+        }
     }
 
     fn next_station(&mut self) {
@@ -185,7 +216,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let app = App::new()?;
+    let app = App::new();
     let res = run_app(&mut terminal, app);
 
     // Restore terminal
@@ -380,14 +411,20 @@ fn ui(f: &mut Frame, app: &mut App) {
     f.render_widget(controls_widget, right_chunks[2]);
 
     // Footer with instructions
-    let footer_text = Line::from(vec![
+    let mut footer_spans = vec![
         Span::styled("[Enter] ", Style::default().fg(pipboy_green).add_modifier(Modifier::BOLD)),
         Span::styled("TURN OFF RADIO  ", Style::default().fg(Color::Yellow)),
         Span::styled("[T] ", Style::default().fg(pipboy_green).add_modifier(Modifier::BOLD)),
         Span::styled("PERK CHART  ", Style::default().fg(Color::Yellow)),
         Span::styled("[Q] ", Style::default().fg(pipboy_green).add_modifier(Modifier::BOLD)),
         Span::styled("QUIT", Style::default().fg(Color::Yellow)),
-    ]);
+    ];
+
+    if let Some(err) = &app.error_message {
+         footer_spans.push(Span::styled(format!("  ERROR: {}", err), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)));
+    }
+
+    let footer_text = Line::from(footer_spans);
 
     let footer = Paragraph::new(footer_text)
         .style(Style::default().bg(pipboy_bg))
