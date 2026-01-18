@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 ratatui = "0.30.0"
 crossterm = "0.29"
+rodio = "0.20"
+anyhow = "1.0"
+symphonia = { version = "0.5.3", features = ["mp3", "pcm"] }

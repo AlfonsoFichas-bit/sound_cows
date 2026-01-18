@@ -8,23 +8,82 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Chart, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
-use std::{error::Error, io};
+use std::{error::Error, fs::File, io::{self, BufReader}, time::Instant};
+use rodio::{Decoder, OutputStream, Sink, Source};
+
+mod scope;
+use scope::{display::{oscilloscope::Oscilloscope, DisplayMode, GraphConfig}, Matrix};
 
 struct App {
     current_tab: usize,
     radio_state: ListState,
     radio_stations: Vec<String>,
+    // Audio and Oscilloscope
+    oscilloscope: Oscilloscope,
+    graph_config: GraphConfig,
+    audio_data: Matrix<f64>,
+    sample_rate: u32,
+    channels: usize,
+    start_time: Option<Instant>,
+    // Keep stream and sink alive
+    _stream: OutputStream,
+    _stream_handle: rodio::OutputStreamHandle,
+    sink: Sink,
 }
 
 impl App {
-    fn new() -> App {
+    fn new() -> Result<App, Box<dyn Error>> {
         let mut radio_state = ListState::default();
         radio_state.select(Some(3)); // Radio Freedom selected by default
-        
-        App {
+
+        // Setup Audio
+        let (_stream, _stream_handle) = OutputStream::try_default()?;
+        let sink = Sink::try_new(&_stream_handle)?;
+
+        let mut audio_data = Vec::new();
+        let mut sample_rate = 44100;
+        let mut channels = 2;
+
+        if let Ok(file) = File::open("audio.mp3") {
+            let source = Decoder::new(BufReader::new(file))?;
+            sample_rate = source.sample_rate();
+            channels = source.channels() as usize;
+
+            // Collect samples for visualization
+            let samples: Vec<f32> = source.convert_samples().collect();
+
+            // Re-open for playing because iterator was consumed
+             let file = File::open("audio.mp3")?;
+             let source = Decoder::new(BufReader::new(file))?;
+             sink.append(source);
+             sink.play();
+
+            // De-interleave for visualization
+            audio_data = vec![Vec::new(); channels];
+            for (i, sample) in samples.iter().enumerate() {
+                audio_data[i % channels].push(*sample as f64);
+            }
+        } else {
+            // Placeholder silence if no file
+             audio_data = vec![vec![0.0; 1024]; 2];
+        }
+
+        let graph_config = GraphConfig {
+            samples: 200, // Window size
+            sampling_rate: sample_rate,
+            scale: 1.0,
+            width: 200,
+            show_ui: false,
+            labels_color: Color::Rgb(51, 255, 51),
+            axis_color: Color::DarkGray,
+            palette: vec![Color::Rgb(51, 255, 51), Color::Cyan],
+            ..Default::default()
+        };
+
+        Ok(App {
             current_tab: 4, // RADIO tab
             radio_state,
             radio_stations: vec![
@@ -39,7 +98,16 @@ impl App {
                 "Military Frequency AF95".to_string(),
                 "Silver Shroud Radio".to_string(),
             ],
-        }
+            oscilloscope: Oscilloscope::default(),
+            graph_config,
+            audio_data,
+            sample_rate,
+            channels,
+            start_time: Some(Instant::now()),
+            _stream,
+            _stream_handle,
+            sink,
+        })
     }
 
     fn next_station(&mut self) {
@@ -81,6 +149,31 @@ impl App {
             self.current_tab -= 1;
         }
     }
+
+    fn get_audio_window(&self) -> Matrix<f64> {
+        if let Some(start_time) = self.start_time {
+            let elapsed_seconds = start_time.elapsed().as_secs_f64();
+            let start_sample = (elapsed_seconds * self.sample_rate as f64) as usize;
+            let end_sample = start_sample + self.graph_config.samples as usize;
+
+            let mut window = vec![Vec::new(); self.channels];
+            for ch in 0..self.channels {
+                if start_sample < self.audio_data[ch].len() {
+                    let end = std::cmp::min(end_sample, self.audio_data[ch].len());
+                    window[ch] = self.audio_data[ch][start_sample..end].to_vec();
+                    // Pad if necessary
+                    if window[ch].len() < self.graph_config.samples as usize {
+                         window[ch].resize(self.graph_config.samples as usize, 0.0);
+                    }
+                } else {
+                    window[ch] = vec![0.0; self.graph_config.samples as usize];
+                }
+            }
+            window
+        } else {
+             vec![vec![0.0; self.graph_config.samples as usize]; self.channels]
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -92,7 +185,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let app = App::new();
+    let app = App::new()?;
     let res = run_app(&mut terminal, app);
 
     // Restore terminal
@@ -115,15 +208,18 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), B
     loop {
         terminal.draw(|f| ui(f, &mut app)).map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Draw error: {}", e)))?;
 
-        if let Event::Key(key) = event::read().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Event error: {}", e)))? {
-            match key.code {
-                KeyCode::Char('q') => return Ok(()),
-                KeyCode::Down => app.next_station(),
-                KeyCode::Up => app.previous_station(),
-                KeyCode::Left => app.previous_tab(),
-                KeyCode::Right => app.next_tab(),
-                KeyCode::Tab => app.next_tab(),
-                _ => {}
+        // Poll for events with timeout to allow refreshing
+        if event::poll(std::time::Duration::from_millis(16))? { // ~60 FPS
+            if let Event::Key(key) = event::read().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Event error: {}", e)))? {
+                match key.code {
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Down => app.next_station(),
+                    KeyCode::Up => app.previous_station(),
+                    KeyCode::Left => app.previous_tab(),
+                    KeyCode::Right => app.next_tab(),
+                    KeyCode::Tab => app.next_tab(),
+                    _ => {}
+                }
             }
         }
     }
@@ -223,30 +319,27 @@ fn ui(f: &mut Frame, app: &mut App) {
         ])
         .split(content_chunks[1]);
 
-    // Waveform display (ASCII art)
-    let waveform = vec![
-        "    ╱╲    ╱╲    ╱╲",
-        "   ╱  ╲  ╱  ╲  ╱  ╲",
-        "  ╱    ╲╱    ╲╱    ╲",
-        " ╱                  ╲",
-        "╱                    ╲",
-    ];
+    // Waveform display
+    let data = app.get_audio_window();
+    let datasets = app.oscilloscope.process(&app.graph_config, &data);
 
-    let waveform_text: Vec<Line> = waveform
+    // Convert scope::display::DataSet to ratatui::widgets::Dataset
+    let ratatui_datasets: Vec<ratatui::widgets::Dataset> = datasets
         .iter()
-        .map(|line| Line::from(Span::styled(*line, Style::default().fg(pipboy_green))))
+        .map(|ds| ds.into())
         .collect();
 
-    let waveform_widget = Paragraph::new(waveform_text)
+    let chart = Chart::new(ratatui_datasets)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(pipboy_green))
                 .style(Style::default().bg(pipboy_bg)),
         )
-        .alignment(Alignment::Center);
+        .x_axis(app.oscilloscope.axis(&app.graph_config, scope::display::Dimension::X))
+        .y_axis(app.oscilloscope.axis(&app.graph_config, scope::display::Dimension::Y));
 
-    f.render_widget(waveform_widget, right_chunks[0]);
+    f.render_widget(chart, right_chunks[0]);
 
     // RADS meter
     let rads_display = vec![
