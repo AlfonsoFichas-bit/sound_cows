@@ -8,10 +8,10 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Chart, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Chart, Gauge, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
-use std::{error::Error, fs::File, io::{self, BufReader}, time::Instant};
+use std::{error::Error, fs::File, io::{self, BufReader}, time::{Duration, Instant}};
 use rodio::{Decoder, OutputStream, Sink, Source};
 
 mod scope;
@@ -31,6 +31,7 @@ struct App {
     sample_rate: u32,
     channels: usize,
     start_time: Option<Instant>,
+    total_duration: Option<Duration>,
     // Keep stream and sink alive
     _stream: Option<OutputStream>,
     _stream_handle: Option<rodio::OutputStreamHandle>,
@@ -48,6 +49,7 @@ impl App {
         let mut sample_rate = 44100;
         let mut channels = 2;
         let mut start_time = None;
+        let mut total_duration = None;
         let mut _stream = None;
         let mut _stream_handle = None;
         let mut sink = None;
@@ -77,7 +79,13 @@ impl App {
                              sample_rate = source.sample_rate();
                              channels = source.channels() as usize;
 
+                             // Calculate total duration roughly from samples if not provided
+                             // Symphonia (under rodio) might not always give total duration for MP3 easily without scanning
+                             // But we load all samples anyway
+
                              let samples: Vec<f32> = source.convert_samples().collect();
+                             let total_samples = samples.len() / channels;
+                             total_duration = Some(Duration::from_secs_f64(total_samples as f64 / sample_rate as f64));
 
                              // Re-open for playing
                              if let Ok(file_play) = File::open("audio.mp3") {
@@ -98,7 +106,6 @@ impl App {
                 },
                 Err(_) => {
                     // It's okay if file doesn't exist, just don't play
-                    // But maybe user wants to know?
                     // error_message = Some("audio.mp3 not found".to_string());
                 }
             }
@@ -137,6 +144,7 @@ impl App {
             sample_rate,
             channels,
             start_time,
+            total_duration,
             _stream,
             _stream_handle,
             sink,
@@ -297,6 +305,13 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), B
     }
 }
 
+fn format_time(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    let minutes = seconds / 60;
+    let seconds = seconds % 60;
+    format!("{:02}:{:02}", minutes, seconds)
+}
+
 fn ui(f: &mut Frame, app: &mut App) {
     let pipboy_green = Color::Rgb(51, 255, 51);
     let pipboy_dark = Color::Rgb(0, 20, 0);
@@ -386,7 +401,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Percentage(50),  // Waveform
-            Constraint::Percentage(25),  // RADS meter
+            Constraint::Percentage(25),  // Progress Bar (formerly RADS)
             Constraint::Percentage(25),  // Controls
         ])
         .split(content_chunks[1]);
@@ -413,27 +428,30 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     f.render_widget(chart, right_chunks[0]);
 
-    // RADS meter
-    let rads_display = vec![
-        Line::from(Span::styled("    RADS", Style::default().fg(pipboy_green))),
-        Line::from(Span::styled("   ┌───┐", Style::default().fg(pipboy_green))),
-        Line::from(vec![
-            Span::styled("   │", Style::default().fg(pipboy_green)),
-            Span::styled(" ▓ ", Style::default().fg(Color::Yellow)),
-            Span::styled("│", Style::default().fg(pipboy_green)),
-        ]),
-        Line::from(Span::styled("   └───┘", Style::default().fg(pipboy_green))),
-    ];
+    // Progress Bar (Replacing RADS)
+    let mut ratio = 0.0;
+    let mut label = String::from("00:00 / 00:00");
 
-    let rads_widget = Paragraph::new(rads_display)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(pipboy_green))
-                .style(Style::default().bg(pipboy_bg)),
-        );
+    if let (Some(start), Some(total)) = (app.start_time, app.total_duration) {
+        let elapsed = start.elapsed();
+        let total_secs = total.as_secs_f64();
+        if total_secs > 0.0 {
+            ratio = (elapsed.as_secs_f64() / total_secs).min(1.0);
+        }
+        label = format!("{} / {}", format_time(elapsed), format_time(total));
+    }
 
-    f.render_widget(rads_widget, right_chunks[1]);
+    let gauge = Gauge::default()
+        .block(Block::default()
+            .borders(Borders::ALL)
+            .title("PROGRESS")
+            .border_style(Style::default().fg(pipboy_green))
+            .style(Style::default().bg(pipboy_bg)))
+        .gauge_style(Style::default().fg(pipboy_green).bg(pipboy_dark))
+        .ratio(ratio)
+        .label(label);
+
+    f.render_widget(gauge, right_chunks[1]);
 
     // Controls display
     let controls = vec![
