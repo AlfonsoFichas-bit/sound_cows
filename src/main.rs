@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -15,7 +15,10 @@ use std::{error::Error, fs::File, io::{self, BufReader}, time::Instant};
 use rodio::{Decoder, OutputStream, Sink, Source};
 
 mod scope;
-use scope::{display::{oscilloscope::Oscilloscope, DisplayMode, GraphConfig}, Matrix};
+use scope::{
+    display::{oscilloscope::Oscilloscope, update_value_f, update_value_i, DisplayMode, GraphConfig},
+    Matrix,
+};
 
 struct App {
     current_tab: usize,
@@ -241,13 +244,51 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), B
 
         // Poll for events with timeout to allow refreshing
         if event::poll(std::time::Duration::from_millis(16))? { // ~60 FPS
-            if let Event::Key(key) = event::read().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Event error: {}", e)))? {
+            let event = event::read().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Event error: {}", e)))?;
+
+            // Pass event to oscilloscope if in Radio tab
+            if app.current_tab == 4 {
+                app.oscilloscope.handle(event.clone());
+            }
+
+            if let Event::Key(key) = event {
+                // Global Scope Controls (Shift + Arrows)
+                let magnitude = match key.modifiers {
+                    KeyModifiers::SHIFT => 10.0,
+                    KeyModifiers::CONTROL => 5.0,
+                    KeyModifiers::ALT => 0.2,
+                    _ => 1.0,
+                };
+
+                // Specific controls for Scope that don't conflict or use modifiers
+                if app.current_tab == 4 {
+                     match key.code {
+                        KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            update_value_f(&mut app.graph_config.scale, 0.01, magnitude, 0.0..10.0);
+                        }
+                        KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            update_value_f(&mut app.graph_config.scale, -0.01, magnitude, 0.0..10.0);
+                        }
+                        KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            update_value_i(&mut app.graph_config.samples, true, 25, magnitude, 0..app.graph_config.width * 2);
+                        }
+                        KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            update_value_i(&mut app.graph_config.samples, false, 25, magnitude, 0..app.graph_config.width * 2);
+                        }
+                        // Toggle features
+                        KeyCode::Char('s') => app.graph_config.scatter = !app.graph_config.scatter,
+                        KeyCode::Char(' ') => app.graph_config.pause = !app.graph_config.pause,
+                        _ => {}
+                    }
+                }
+
+                // Standard Navigation
                 match key.code {
                     KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Down => app.next_station(),
-                    KeyCode::Up => app.previous_station(),
-                    KeyCode::Left => app.previous_tab(),
-                    KeyCode::Right => app.next_tab(),
+                    KeyCode::Down if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_station(),
+                    KeyCode::Up if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_station(),
+                    KeyCode::Left if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_tab(),
+                    KeyCode::Right if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_tab(),
                     KeyCode::Tab => app.next_tab(),
                     _ => {}
                 }
@@ -396,8 +437,9 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     // Controls display
     let controls = vec![
-        Line::from(Span::styled("    ● POWER", Style::default().fg(Color::Red))),
-        Line::from(Span::styled("    ◐ TUNE", Style::default().fg(pipboy_green))),
+        Line::from(Span::styled("   [Shift+Arrows] ZOOM/WIDTH", Style::default().fg(pipboy_green))),
+        Line::from(Span::styled("   [S] SCATTER  [T] TRIGGER", Style::default().fg(pipboy_green))),
+        Line::from(Span::styled("   [Space] PAUSE", Style::default().fg(pipboy_green))),
     ];
 
     let controls_widget = Paragraph::new(controls)
@@ -405,7 +447,8 @@ fn ui(f: &mut Frame, app: &mut App) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(pipboy_green))
-                .style(Style::default().bg(pipboy_bg)),
+                .style(Style::default().bg(pipboy_bg))
+                .title("SCOPE CTRL"),
         );
 
     f.render_widget(controls_widget, right_chunks[2]);
@@ -413,9 +456,9 @@ fn ui(f: &mut Frame, app: &mut App) {
     // Footer with instructions
     let mut footer_spans = vec![
         Span::styled("[Enter] ", Style::default().fg(pipboy_green).add_modifier(Modifier::BOLD)),
-        Span::styled("TURN OFF RADIO  ", Style::default().fg(Color::Yellow)),
+        Span::styled("TURN OFF  ", Style::default().fg(Color::Yellow)),
         Span::styled("[T] ", Style::default().fg(pipboy_green).add_modifier(Modifier::BOLD)),
-        Span::styled("PERK CHART  ", Style::default().fg(Color::Yellow)),
+        Span::styled("PERK  ", Style::default().fg(Color::Yellow)),
         Span::styled("[Q] ", Style::default().fg(pipboy_green).add_modifier(Modifier::BOLD)),
         Span::styled("QUIT", Style::default().fg(Color::Yellow)),
     ];
