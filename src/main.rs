@@ -15,7 +15,7 @@ mod scope;
 mod ui;
 
 use app::state::App;
-use scope::display::{update_value_f, update_value_i, DisplayMode}; // Import DisplayMode trait
+use scope::display::{update_value_f, update_value_i, DisplayMode};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Setup terminal
@@ -84,7 +84,12 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), B
                         }
                         // Toggle features
                         KeyCode::Char('s') => app.graph_config.scatter = !app.graph_config.scatter,
-                        KeyCode::Char(' ') => app.graph_config.pause = !app.graph_config.pause,
+                        KeyCode::Char(' ') => {
+                            app.graph_config.pause = !app.graph_config.pause;
+                            app.player.toggle_pause();
+                        },
+                        KeyCode::Char('+') => app.player.volume_up(),
+                        KeyCode::Char('-') => app.player.volume_down(),
                         _ => {}
                     }
                 }

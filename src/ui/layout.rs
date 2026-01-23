@@ -78,7 +78,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     f.render_widget(components::progress::render(app), right_chunks[1]);
 
     // Controls
-    f.render_widget(components::scope_view::render_controls(), right_chunks[2]);
+    f.render_widget(components::scope_view::render_controls(app), right_chunks[2]);
 
     // Footer
     f.render_widget(components::footer::render(app), chunks[2]);
