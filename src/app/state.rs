@@ -1,6 +1,7 @@
 use ratatui::{style::Color, widgets::ListState};
 use crate::audio::player::AudioPlayer;
 use crate::scope::display::{oscilloscope::Oscilloscope, GraphConfig};
+use crate::ui::theme::{PIPBOY_GREEN, COLOR_RED}; // Import theme colors
 
 pub struct App {
     pub current_tab: usize,
@@ -26,9 +27,9 @@ impl App {
             scale: 1.0,
             width: 200,
             show_ui: false,
-            labels_color: Color::Rgb(51, 255, 51), // We will use theme later, but config needs Color
+            labels_color: PIPBOY_GREEN,
             axis_color: Color::DarkGray,
-            palette: vec![Color::Rgb(51, 255, 51), Color::Cyan],
+            palette: vec![PIPBOY_GREEN, COLOR_RED], // Use theme colors for oscilloscope lines
             ..Default::default()
         };
 
