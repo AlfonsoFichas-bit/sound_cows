@@ -14,7 +14,7 @@ mod audio;
 mod scope;
 mod ui;
 
-use app::state::App;
+use app::state::{App, InputMode};
 use scope::display::{update_value_f, update_value_i, DisplayMode};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -45,7 +45,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), Box<dyn Error>> {
+// Added where clause to fix E0310
+fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), Box<dyn Error>>
+where <B as Backend>::Error: 'static {
     loop {
         terminal.draw(|f| ui::layout::draw(f, &mut app)).map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Draw error: {}", e)))?;
 
@@ -67,42 +69,85 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), B
                     _ => 1.0,
                 };
 
-                // Specific controls for Scope that don't conflict or use modifiers
-                if app.current_tab == 4 {
-                     match key.code {
-                        KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                            update_value_f(&mut app.graph_config.scale, 0.01, magnitude, 0.0..10.0);
-                        }
-                        KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                            update_value_f(&mut app.graph_config.scale, -0.01, magnitude, 0.0..10.0);
-                        }
-                        KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                            update_value_i(&mut app.graph_config.samples, true, 25, magnitude, 0..app.graph_config.width * 2);
-                        }
-                        KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                            update_value_i(&mut app.graph_config.samples, false, 25, magnitude, 0..app.graph_config.width * 2);
-                        }
-                        // Toggle features
-                        KeyCode::Char('s') => app.graph_config.scatter = !app.graph_config.scatter,
-                        KeyCode::Char(' ') => {
-                            app.graph_config.pause = !app.graph_config.pause;
-                            app.player.toggle_pause();
-                        },
-                        KeyCode::Char('+') => app.player.volume_up(),
-                        KeyCode::Char('-') => app.player.volume_down(),
-                        _ => {}
-                    }
-                }
+                // Handle Input Mode
+                match app.input_mode {
+                    InputMode::Normal => {
+                        match key.code {
+                            KeyCode::Char('/') if app.current_tab == 2 => { // DATA tab is index 2 ("DATA")
+                                app.input_mode = InputMode::Editing;
+                            }
+                            KeyCode::Char('q') => return Ok(()),
 
-                // Standard Navigation
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Down if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_station(),
-                    KeyCode::Up if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_station(),
-                    KeyCode::Left if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_tab(),
-                    KeyCode::Right if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_tab(),
-                    KeyCode::Tab => app.next_tab(),
-                    _ => {}
+                            // Specific controls for Scope that don't conflict or use modifiers
+                            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) && app.current_tab == 4 => {
+                                update_value_f(&mut app.graph_config.scale, 0.01, magnitude, 0.0..10.0);
+                            }
+                            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) && app.current_tab == 4 => {
+                                update_value_f(&mut app.graph_config.scale, -0.01, magnitude, 0.0..10.0);
+                            }
+                            KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) && app.current_tab == 4 => {
+                                update_value_i(&mut app.graph_config.samples, true, 25, magnitude, 0..app.graph_config.width * 2);
+                            }
+                            KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) && app.current_tab == 4 => {
+                                update_value_i(&mut app.graph_config.samples, false, 25, magnitude, 0..app.graph_config.width * 2);
+                            }
+                            // Toggle features
+                            KeyCode::Char('s') if app.current_tab == 4 => app.graph_config.scatter = !app.graph_config.scatter,
+                            KeyCode::Char(' ') if app.current_tab == 4 => {
+                                app.graph_config.pause = !app.graph_config.pause;
+                                app.player.toggle_pause();
+                            },
+                            KeyCode::Char('+') => app.player.volume_up(),
+                            KeyCode::Char('-') => app.player.volume_down(),
+
+                            // Standard Navigation
+                            KeyCode::Down if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_station(),
+                            KeyCode::Up if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_station(),
+                            KeyCode::Left if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_tab(),
+                            KeyCode::Right if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_tab(),
+                            KeyCode::Tab => app.next_tab(),
+                            _ => {}
+                        }
+                    },
+                    InputMode::Editing => {
+                        match key.code {
+                            KeyCode::Enter => {
+                                let query = app.search_input.clone();
+                                app.loading_status = Some(format!("Downloading: {}...", query));
+                                // In a real app, this should be async or in a thread.
+                                // For now it blocks UI, but shows intention.
+                                // We need to force a redraw here if we want the user to see "Downloading"
+                                // But since this is a single thread loop, it will freeze.
+                                // Improvement: Offload download to thread later.
+                                terminal.draw(|f| ui::layout::draw(f, &mut app)).map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Draw error: {}", e)))?;
+
+                                app.player.load_source(&query);
+                                app.loading_status = Some("Ready".to_string());
+                                // Clear input
+                                app.search_input.clear();
+                                app.reset_cursor();
+                                app.input_mode = InputMode::Normal;
+                                // Auto switch to Radio tab (index 4) to see visualization?
+                                app.current_tab = 4;
+                            }
+                            KeyCode::Esc => {
+                                app.input_mode = InputMode::Normal;
+                            }
+                            KeyCode::Backspace => {
+                                app.delete_char();
+                            }
+                            KeyCode::Left => {
+                                app.move_cursor_left();
+                            }
+                            KeyCode::Right => {
+                                app.move_cursor_right();
+                            }
+                            KeyCode::Char(to_insert) => {
+                                app.enter_char(to_insert);
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
         }

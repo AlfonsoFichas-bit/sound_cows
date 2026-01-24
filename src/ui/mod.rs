@@ -5,5 +5,6 @@ pub mod components {
     pub mod scope_view;
     pub mod progress;
     pub mod footer;
+    pub mod search;
 }
 pub mod layout;

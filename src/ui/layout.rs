@@ -26,59 +26,79 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     f.render_widget(components::header::render(app), chunks[0]);
 
     // Content area
-    let content_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(65),  // Left panel (radio list)
-            Constraint::Percentage(35),  // Right panel (waveform + controls)
-        ])
-        .split(chunks[1]);
+    // Depending on tab, we might render different things.
+    // For now, RADIO (tab 4) shows the split view.
+    // DATA (tab 2) shows the Search view.
+    // Others show placeholder or Radio view default.
 
-    // Playlist
-    let playlist_widget = components::playlist::render(&app.radio_stations);
-    f.render_stateful_widget(
-        playlist_widget,
-        content_chunks[0],
-        &mut app.radio_state
-    );
+    if app.current_tab == 2 {
+        // DATA Tab - Search Interface
+        let content_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Search Input
+                Constraint::Min(0),    // Results/History (future)
+            ])
+            .split(chunks[1]);
 
-    // Right panel
-    let right_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(50),  // Waveform
-            Constraint::Percentage(25),  // Progress
-            Constraint::Percentage(25),  // Controls
-        ])
-        .split(content_chunks[1]);
+        f.render_widget(components::search::render(app), content_chunks[0]);
+        // Future: Render results list in content_chunks[1]
+    } else {
+        // RADIO Tab (Default Layout)
+        let content_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(65),  // Left panel (radio list)
+                Constraint::Percentage(35),  // Right panel (waveform + controls)
+            ])
+            .split(chunks[1]);
 
-    // Oscilloscope (Inline generation because of borrow checker issues with Chart data)
-    let window_size = app.graph_config.samples as usize;
-    let data = app.player.get_window(window_size);
-    let datasets_data = app.oscilloscope.process(&app.graph_config, &data);
+        // Playlist
+        let playlist_widget = components::playlist::render(&app.radio_stations);
+        f.render_stateful_widget(
+            playlist_widget,
+            content_chunks[0],
+            &mut app.radio_state
+        );
 
-    let ratatui_datasets: Vec<ratatui::widgets::Dataset> = datasets_data
-        .iter()
-        .map(|ds| ds.into())
-        .collect();
+        // Right panel
+        let right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(50),  // Waveform
+                Constraint::Percentage(25),  // Progress
+                Constraint::Percentage(25),  // Controls
+            ])
+            .split(content_chunks[1]);
 
-    let chart = Chart::new(ratatui_datasets)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(PIPBOY_GREEN))
-                .style(Style::default().bg(PIPBOY_BG)),
-        )
-        .x_axis(app.oscilloscope.axis(&app.graph_config, Dimension::X))
-        .y_axis(app.oscilloscope.axis(&app.graph_config, Dimension::Y));
+        // Oscilloscope (Inline generation because of borrow checker issues with Chart data)
+        let window_size = app.graph_config.samples as usize;
+        let data = app.player.get_window(window_size);
+        let datasets_data = app.oscilloscope.process(&app.graph_config, &data);
 
-    f.render_widget(chart, right_chunks[0]);
+        let ratatui_datasets: Vec<ratatui::widgets::Dataset> = datasets_data
+            .iter()
+            .map(|ds| ds.into())
+            .collect();
 
-    // Progress Bar
-    f.render_widget(components::progress::render(app), right_chunks[1]);
+        let chart = Chart::new(ratatui_datasets)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(PIPBOY_GREEN))
+                    .style(Style::default().bg(PIPBOY_BG)),
+            )
+            .x_axis(app.oscilloscope.axis(&app.graph_config, Dimension::X))
+            .y_axis(app.oscilloscope.axis(&app.graph_config, Dimension::Y));
 
-    // Controls
-    f.render_widget(components::scope_view::render_controls(app), right_chunks[2]);
+        f.render_widget(chart, right_chunks[0]);
+
+        // Progress Bar
+        f.render_widget(components::progress::render(app), right_chunks[1]);
+
+        // Controls
+        f.render_widget(components::scope_view::render_controls(app), right_chunks[2]);
+    }
 
     // Footer
     f.render_widget(components::footer::render(app), chunks[2]);

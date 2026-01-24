@@ -1,7 +1,12 @@
 use ratatui::{style::Color, widgets::ListState};
 use crate::audio::player::AudioPlayer;
 use crate::scope::display::{oscilloscope::Oscilloscope, GraphConfig};
-use crate::ui::theme::{PIPBOY_GREEN, COLOR_RED}; // Import theme colors
+use crate::ui::theme::{PIPBOY_GREEN, COLOR_RED};
+
+pub enum InputMode {
+    Normal,
+    Editing,
+}
 
 pub struct App {
     pub current_tab: usize,
@@ -12,6 +17,12 @@ pub struct App {
     pub player: AudioPlayer,
     pub oscilloscope: Oscilloscope,
     pub graph_config: GraphConfig,
+
+    // Search State
+    pub input_mode: InputMode,
+    pub search_input: String,
+    pub cursor_position: usize,
+    pub loading_status: Option<String>,
 }
 
 impl App {
@@ -20,16 +31,7 @@ impl App {
         radio_state.select(Some(3)); // Radio Freedom
 
         let mut player = AudioPlayer::new();
-
-        // Initial load logic
-        // Try local file first, if not exists, we could try a URL
-        // For Phase 1 demo, let's stick to audio.mp3 but use the new load_source
-        player.load_source("audio.mp3");
-
-        // Example of how to use URL (commented out for now until user explicitly enables it or we have a good test URL)
-        // if player.total_duration.is_none() {
-        //      player.load_source("https://soundcloud.com/some-song-url");
-        // }
+        player.load_source("audio.mp3"); // Load local by default
 
         let graph_config = GraphConfig {
             samples: 200,
@@ -39,7 +41,7 @@ impl App {
             show_ui: false,
             labels_color: PIPBOY_GREEN,
             axis_color: Color::DarkGray,
-            palette: vec![PIPBOY_GREEN, COLOR_RED], // Use theme colors for oscilloscope lines
+            palette: vec![PIPBOY_GREEN, COLOR_RED],
             ..Default::default()
         };
 
@@ -61,6 +63,10 @@ impl App {
             player,
             oscilloscope: Oscilloscope::default(),
             graph_config,
+            input_mode: InputMode::Normal,
+            search_input: String::new(),
+            cursor_position: 0,
+            loading_status: None,
         }
     }
 
@@ -102,5 +108,48 @@ impl App {
         } else {
             self.current_tab -= 1;
         }
+    }
+
+    // Input Handling Helper Methods
+    pub fn move_cursor_left(&mut self) {
+        let cursor_moved_left = self.cursor_position.saturating_sub(1);
+        self.cursor_position = self.clamp_cursor(cursor_moved_left);
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        let cursor_moved_right = self.cursor_position.saturating_add(1);
+        self.cursor_position = self.clamp_cursor(cursor_moved_right);
+    }
+
+    pub fn enter_char(&mut self, new_char: char) {
+        self.search_input.insert(self.cursor_position, new_char);
+        self.move_cursor_right();
+    }
+
+    pub fn delete_char(&mut self) {
+        let is_not_cursor_leftmost = self.cursor_position != 0;
+        if is_not_cursor_leftmost {
+            let current_index = self.cursor_position;
+            let from_left_to_current_index = current_index - 1;
+
+            // Getting all characters before the selected character.
+            let before_char_to_delete = self.search_input.chars().take(from_left_to_current_index);
+            // Getting all characters after selected character.
+            let after_char_to_delete = self.search_input.chars().skip(current_index);
+
+            // Put all characters together except the selected one.
+            // By retrieving the content without the deleted character,
+            // we can reset the search input with this new content.
+            self.search_input = before_char_to_delete.chain(after_char_to_delete).collect();
+            self.move_cursor_left();
+        }
+    }
+
+    pub fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
+        new_cursor_pos.clamp(0, self.search_input.chars().count())
+    }
+
+    pub fn reset_cursor(&mut self) {
+        self.cursor_position = 0;
     }
 }
