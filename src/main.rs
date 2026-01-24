@@ -16,6 +16,7 @@ mod ui;
 
 use app::state::{App, InputMode};
 use scope::display::{update_value_f, update_value_i, DisplayMode};
+use audio::stream::search_audio;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Setup terminal
@@ -45,23 +46,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// Added where clause to fix E0310
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), Box<dyn Error>>
 where <B as Backend>::Error: 'static {
     loop {
         terminal.draw(|f| ui::layout::draw(f, &mut app)).map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Draw error: {}", e)))?;
 
-        // Poll for events with timeout to allow refreshing
-        if event::poll(std::time::Duration::from_millis(16))? { // ~60 FPS
+        if event::poll(std::time::Duration::from_millis(16))? {
             let event = event::read().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Event error: {}", e)))?;
 
-            // Pass event to oscilloscope if in Radio tab
             if app.current_tab == 4 {
                 app.oscilloscope.handle(event.clone());
             }
 
             if let Event::Key(key) = event {
-                // Global Scope Controls (Shift + Arrows)
+                // Global Scope Controls
                 let magnitude = match key.modifiers {
                     KeyModifiers::SHIFT => 10.0,
                     KeyModifiers::CONTROL => 5.0,
@@ -69,16 +67,14 @@ where <B as Backend>::Error: 'static {
                     _ => 1.0,
                 };
 
-                // Handle Input Mode
                 match app.input_mode {
                     InputMode::Normal => {
                         match key.code {
-                            KeyCode::Char('/') if app.current_tab == 2 => { // DATA tab is index 2 ("DATA")
+                            KeyCode::Char('/') if app.current_tab == 2 => {
                                 app.input_mode = InputMode::Editing;
                             }
                             KeyCode::Char('q') => return Ok(()),
 
-                            // Specific controls for Scope that don't conflict or use modifiers
                             KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) && app.current_tab == 4 => {
                                 update_value_f(&mut app.graph_config.scale, 0.01, magnitude, 0.0..10.0);
                             }
@@ -91,7 +87,6 @@ where <B as Backend>::Error: 'static {
                             KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) && app.current_tab == 4 => {
                                 update_value_i(&mut app.graph_config.samples, false, 25, magnitude, 0..app.graph_config.width * 2);
                             }
-                            // Toggle features
                             KeyCode::Char('s') if app.current_tab == 4 => app.graph_config.scatter = !app.graph_config.scatter,
                             KeyCode::Char(' ') if app.current_tab == 4 => {
                                 app.graph_config.pause = !app.graph_config.pause;
@@ -100,7 +95,6 @@ where <B as Backend>::Error: 'static {
                             KeyCode::Char('+') => app.player.volume_up(),
                             KeyCode::Char('-') => app.player.volume_down(),
 
-                            // Standard Navigation
                             KeyCode::Down if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_station(),
                             KeyCode::Up if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_station(),
                             KeyCode::Left if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_tab(),
@@ -113,22 +107,50 @@ where <B as Backend>::Error: 'static {
                         match key.code {
                             KeyCode::Enter => {
                                 let query = app.search_input.clone();
-                                app.loading_status = Some(format!("Downloading: {}...", query));
-                                // In a real app, this should be async or in a thread.
-                                // For now it blocks UI, but shows intention.
-                                // We need to force a redraw here if we want the user to see "Downloading"
-                                // But since this is a single thread loop, it will freeze.
-                                // Improvement: Offload download to thread later.
-                                terminal.draw(|f| ui::layout::draw(f, &mut app)).map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Draw error: {}", e)))?;
 
-                                app.player.load_source(&query);
-                                app.loading_status = Some("Ready".to_string());
-                                // Clear input
-                                app.search_input.clear();
-                                app.reset_cursor();
-                                app.input_mode = InputMode::Normal;
-                                // Auto switch to Radio tab (index 4) to see visualization?
-                                app.current_tab = 4;
+                                if query.starts_with("http://") || query.starts_with("https://") {
+                                    // Direct URL handling
+                                    app.loading_status = Some(format!("Downloading URL: {}...", query));
+                                    terminal.draw(|f| ui::layout::draw(f, &mut app))?;
+
+                                    app.player.load_source(&query);
+
+                                    if app.player.error_message.is_some() {
+                                        app.loading_status = Some("Download failed".to_string());
+                                    } else {
+                                        app.loading_status = Some("Playing URL".to_string());
+                                        app.current_tab = 4; // Switch to Radio
+                                    }
+
+                                    app.search_input.clear();
+                                    app.reset_cursor();
+                                    app.input_mode = InputMode::Normal;
+
+                                } else {
+                                    // Search Query handling
+                                    app.loading_status = Some(format!("Searching: {}...", query));
+                                    terminal.draw(|f| ui::layout::draw(f, &mut app))?;
+
+                                    match search_audio(&query) {
+                                        Ok(results) => {
+                                            app.search_results = results;
+                                            app.loading_status = Some(format!("Found {} results", app.search_results.len()));
+                                            if !app.search_results.is_empty() {
+                                                app.search_results_state.select(Some(0));
+                                                app.input_mode = InputMode::SearchResults;
+                                            } else {
+                                                app.input_mode = InputMode::Normal;
+                                            }
+                                        },
+                                        Err(e) => {
+                                            app.loading_status = Some(format!("Error: {}", e));
+                                            app.input_mode = InputMode::Normal;
+                                        }
+                                    }
+
+                                    app.search_input.clear();
+                                    app.reset_cursor();
+                                }
                             }
                             KeyCode::Esc => {
                                 app.input_mode = InputMode::Normal;
@@ -145,6 +167,40 @@ where <B as Backend>::Error: 'static {
                             KeyCode::Char(to_insert) => {
                                 app.enter_char(to_insert);
                             }
+                            _ => {}
+                        }
+                    },
+                    InputMode::SearchResults => {
+                        match key.code {
+                            KeyCode::Down => app.next_search_result(),
+                            KeyCode::Up => app.previous_search_result(),
+                            KeyCode::Esc => {
+                                app.input_mode = InputMode::Normal;
+                                app.search_results.clear();
+                            },
+                            KeyCode::Enter => {
+                                let selected_track = if let Some(selected_idx) = app.search_results_state.selected() {
+                                    app.search_results.get(selected_idx).cloned()
+                                } else {
+                                    None
+                                };
+
+                                if let Some((title, url)) = selected_track {
+                                    app.loading_status = Some(format!("Downloading: {}...", title));
+                                    terminal.draw(|f| ui::layout::draw(f, &mut app))?;
+
+                                    app.player.load_source(&url);
+
+                                    if app.player.error_message.is_some() {
+                                         app.loading_status = Some("Download failed".to_string());
+                                    } else {
+                                         app.loading_status = Some(format!("Playing: {}", title));
+                                         app.current_tab = 4;
+                                    }
+
+                                    app.input_mode = InputMode::Normal;
+                                }
+                            },
                             _ => {}
                         }
                     }

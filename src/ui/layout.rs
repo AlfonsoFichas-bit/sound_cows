@@ -25,24 +25,26 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Header
     f.render_widget(components::header::render(app), chunks[0]);
 
-    // Content area
-    // Depending on tab, we might render different things.
-    // For now, RADIO (tab 4) shows the split view.
-    // DATA (tab 2) shows the Search view.
-    // Others show placeholder or Radio view default.
-
     if app.current_tab == 2 {
         // DATA Tab - Search Interface
         let content_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // Search Input
-                Constraint::Min(0),    // Results/History (future)
+                Constraint::Min(0),    // Results List
             ])
             .split(chunks[1]);
 
-        f.render_widget(components::search::render(app), content_chunks[0]);
-        // Future: Render results list in content_chunks[1]
+        f.render_widget(components::search::render_input(app), content_chunks[0]);
+
+        // Render results list statefully - Passing fields instead of full app to fix borrow error
+        let results_widget = components::search::render_results(&app.search_results, &app.input_mode);
+        f.render_stateful_widget(
+            results_widget,
+            content_chunks[1],
+            &mut app.search_results_state
+        );
+
     } else {
         // RADIO Tab (Default Layout)
         let content_chunks = Layout::default()

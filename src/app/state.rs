@@ -6,6 +6,7 @@ use crate::ui::theme::{PIPBOY_GREEN, COLOR_RED};
 pub enum InputMode {
     Normal,
     Editing,
+    SearchResults, // New mode for navigating results
 }
 
 pub struct App {
@@ -23,6 +24,10 @@ pub struct App {
     pub search_input: String,
     pub cursor_position: usize,
     pub loading_status: Option<String>,
+
+    // Search Results
+    pub search_results: Vec<(String, String)>, // (Title, URL)
+    pub search_results_state: ListState,
 }
 
 impl App {
@@ -67,6 +72,8 @@ impl App {
             search_input: String::new(),
             cursor_position: 0,
             loading_status: None,
+            search_results: Vec::new(),
+            search_results_state: ListState::default(),
         }
     }
 
@@ -132,15 +139,7 @@ impl App {
             let current_index = self.cursor_position;
             let from_left_to_current_index = current_index - 1;
 
-            // Getting all characters before the selected character.
-            let before_char_to_delete = self.search_input.chars().take(from_left_to_current_index);
-            // Getting all characters after selected character.
-            let after_char_to_delete = self.search_input.chars().skip(current_index);
-
-            // Put all characters together except the selected one.
-            // By retrieving the content without the deleted character,
-            // we can reset the search input with this new content.
-            self.search_input = before_char_to_delete.chain(after_char_to_delete).collect();
+            self.search_input = self.search_input.chars().take(from_left_to_current_index).chain(self.search_input.chars().skip(current_index)).collect();
             self.move_cursor_left();
         }
     }
@@ -151,5 +150,36 @@ impl App {
 
     pub fn reset_cursor(&mut self) {
         self.cursor_position = 0;
+    }
+
+    // Search Result Navigation
+    pub fn next_search_result(&mut self) {
+        if self.search_results.is_empty() { return; }
+        let i = match self.search_results_state.selected() {
+            Some(i) => {
+                if i >= self.search_results.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.search_results_state.select(Some(i));
+    }
+
+    pub fn previous_search_result(&mut self) {
+        if self.search_results.is_empty() { return; }
+        let i = match self.search_results_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.search_results.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.search_results_state.select(Some(i));
     }
 }

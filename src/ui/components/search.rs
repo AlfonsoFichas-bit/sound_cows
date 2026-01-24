@@ -1,18 +1,18 @@
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 use crate::app::state::{App, InputMode};
-use crate::ui::theme::{PIPBOY_BG, PIPBOY_GREEN, COLOR_YELLOW};
+use crate::ui::theme::{PIPBOY_BG, PIPBOY_GREEN, COLOR_YELLOW, PIPBOY_DARK};
 
-pub fn render(app: &App) -> Paragraph {
+pub fn render_input(app: &App) -> Paragraph {
     let (msg, style) = match app.input_mode {
         InputMode::Normal => (
             vec![
                 Span::raw("Press "),
                 Span::styled("/", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to search audio URL..."),
+                Span::raw(" to search audio..."),
             ],
             Style::default().fg(PIPBOY_GREEN),
         ),
@@ -20,9 +20,15 @@ pub fn render(app: &App) -> Paragraph {
             vec![
                 Span::raw("> "),
                 Span::styled(&app.search_input, Style::default().fg(COLOR_YELLOW)),
-                Span::styled("█", Style::default().fg(PIPBOY_GREEN).add_modifier(Modifier::SLOW_BLINK)), // Fake cursor
+                Span::styled("█", Style::default().fg(PIPBOY_GREEN).add_modifier(Modifier::SLOW_BLINK)),
             ],
             Style::default().fg(COLOR_YELLOW),
+        ),
+        InputMode::SearchResults => (
+            vec![
+                Span::raw("Select a track and press Enter to play. Esc to cancel."),
+            ],
+            Style::default().fg(PIPBOY_GREEN),
         ),
     };
 
@@ -36,8 +42,37 @@ pub fn render(app: &App) -> Paragraph {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("DATA / SEARCH")
+                .title("SEARCH QUERY")
                 .border_style(style)
                 .style(Style::default().bg(PIPBOY_BG)),
         )
+}
+
+pub fn render_results(search_results: &Vec<(String, String)>, input_mode: &InputMode) -> List<'static> {
+    let items: Vec<ListItem> = search_results
+        .iter()
+        .map(|(title, _url)| {
+            ListItem::new(vec![Line::from(Span::styled(title.clone(), Style::default().fg(PIPBOY_GREEN)))])
+        })
+        .collect();
+
+    List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("RESULTS")
+                .border_style(if matches!(input_mode, InputMode::SearchResults) {
+                    Style::default().fg(COLOR_YELLOW)
+                } else {
+                    Style::default().fg(PIPBOY_GREEN)
+                })
+                .style(Style::default().bg(PIPBOY_BG)),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(PIPBOY_GREEN)
+                .fg(PIPBOY_DARK)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ")
 }
