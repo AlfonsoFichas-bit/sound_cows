@@ -19,7 +19,17 @@ impl App {
         let mut radio_state = ListState::default();
         radio_state.select(Some(3)); // Radio Freedom
 
-        let player = AudioPlayer::new();
+        let mut player = AudioPlayer::new();
+
+        // Initial load logic
+        // Try local file first, if not exists, we could try a URL
+        // For Phase 1 demo, let's stick to audio.mp3 but use the new load_source
+        player.load_source("audio.mp3");
+
+        // Example of how to use URL (commented out for now until user explicitly enables it or we have a good test URL)
+        // if player.total_duration.is_none() {
+        //      player.load_source("https://soundcloud.com/some-song-url");
+        // }
 
         let graph_config = GraphConfig {
             samples: 200,

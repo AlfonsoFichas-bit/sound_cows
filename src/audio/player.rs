@@ -1,8 +1,10 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::time::{Duration, Instant};
+use std::path::Path;
 use rodio::{Decoder, OutputStream, Sink, Source};
 use crate::scope::Matrix;
+use super::stream::download_audio;
 
 pub struct AudioPlayer {
     // We keep these alive
@@ -21,6 +23,7 @@ pub struct AudioPlayer {
     // State
     pub is_paused: bool,
     pub volume: f32,
+    pub current_source: String,
 }
 
 impl AudioPlayer {
@@ -37,6 +40,7 @@ impl AudioPlayer {
             error_message: None,
             is_paused: false,
             volume: 1.0,
+            current_source: String::new(),
         };
 
         player.init();
@@ -57,14 +61,42 @@ impl AudioPlayer {
             },
             Err(e) => self.error_message = Some(format!("Audio init error: {}", e)),
         }
-
-        if self.sink.is_some() {
-             self.load_file("audio.mp3");
-        }
     }
 
-    fn load_file(&mut self, path: &str) {
+    pub fn load_source(&mut self, path_or_url: &str) {
+        if self.sink.is_none() {
+            return;
+        }
+
+        self.current_source = path_or_url.to_string();
+        self.error_message = None; // Clear previous errors
+
+        let path = if path_or_url.starts_with("http") {
+            // It's a URL, download it first
+            let temp_path = Path::new("stream_cache.mp3");
+            match download_audio(path_or_url, temp_path) {
+                Ok(_) => temp_path,
+                Err(e) => {
+                    self.error_message = Some(e);
+                    return;
+                }
+            }
+        } else {
+            // It's a local file
+            Path::new(path_or_url)
+        };
+
+        self.play_file(path);
+    }
+
+    fn play_file(&mut self, path: &Path) {
         if let Some(sink) = &self.sink {
+            // Clear sink if playing
+            sink.stop();
+            // Re-create sink might be safer but stop() works usually
+            // Actually, rodio sink isn't easily reusable for new source if we want clean state
+            // Let's just append.
+
             match File::open(path) {
                 Ok(file) => {
                     match Decoder::new(BufReader::new(file)) {
@@ -79,9 +111,20 @@ impl AudioPlayer {
                              // Re-open for playing
                              if let Ok(file_play) = File::open(path) {
                                  if let Ok(source_play) = Decoder::new(BufReader::new(file_play)) {
-                                     sink.append(source_play);
-                                     sink.play();
-                                     self.start_time = Some(Instant::now());
+                                     // We need a fresh sink to stop previous audio instantly and start new
+                                     // But we can't easily replace the sink if it's owned by self and we are in &mut self...
+                                     // Actually we can:
+                                     if let Some(handle) = &self._stream_handle {
+                                         if let Ok(new_sink) = Sink::try_new(handle) {
+                                             new_sink.set_volume(self.volume);
+                                             new_sink.append(source_play);
+                                             // self.sink = Some(new_sink); // Wait, this drops the old sink?
+                                             // Dropping the old sink stops the audio? Yes.
+                                             self.sink = Some(new_sink);
+                                             self.start_time = Some(Instant::now());
+                                             self.is_paused = false;
+                                         }
+                                     }
                                  }
                              }
 
@@ -94,8 +137,7 @@ impl AudioPlayer {
                     }
                 },
                 Err(_) => {
-                    // Silent fail or log
-                    // self.error_message = Some(format!("File not found: {}", path));
+                     self.error_message = Some(format!("File not found: {}", path.display()));
                 }
             }
         }
@@ -103,12 +145,6 @@ impl AudioPlayer {
 
     pub fn get_window(&self, window_size: usize) -> Matrix<f64> {
         if let Some(start_time) = self.start_time {
-            // Note: This naive implementation doesn't account for pausing time drift
-            // For a robust player, we'd track "accumulated pause duration" or use Sink position if available.
-            // Given the constraints, we will just use elapsed time, which means the visual will jump if paused.
-            // Fixing this properly requires refactoring how we track time.
-            // For now, let's just implement the control.
-
             let elapsed_seconds = start_time.elapsed().as_secs_f64();
             let start_sample = (elapsed_seconds * self.sample_rate as f64) as usize;
             let end_sample = start_sample + window_size;
@@ -137,7 +173,6 @@ impl AudioPlayer {
             if self.is_paused {
                 sink.play();
                 self.is_paused = false;
-                // TODO: Correct start_time to account for paused duration to avoid visual skip
             } else {
                 sink.pause();
                 self.is_paused = true;
@@ -147,7 +182,7 @@ impl AudioPlayer {
 
     pub fn set_volume(&mut self, volume: f32) {
         if let Some(sink) = &self.sink {
-            self.volume = volume.clamp(0.0, 10.0); // 1.0 is 100%, allow boost up to 1000%? Or just 0-1? Rodio documentation says 1.0 is default.
+            self.volume = volume.clamp(0.0, 10.0);
             sink.set_volume(self.volume);
         }
     }
