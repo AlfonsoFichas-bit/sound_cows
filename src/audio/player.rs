@@ -155,6 +155,11 @@ impl AudioPlayer {
     }
 
     pub fn get_window(&self, window_size: usize) -> Matrix<f64> {
+        // If paused, return a flat line (buffer of zeros)
+        if self.is_paused {
+            return vec![vec![0.0; window_size]; self.channels];
+        }
+
         let elapsed_seconds = self.get_current_time().as_secs_f64();
         let start_sample = (elapsed_seconds * self.sample_rate as f64) as usize;
         let end_sample = start_sample + window_size;
