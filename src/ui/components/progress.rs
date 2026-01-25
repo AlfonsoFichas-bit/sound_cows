@@ -16,9 +16,11 @@ pub fn render(app: &crate::app::state::App) -> Gauge {
     let mut ratio = 0.0;
     let mut label = String::from("00:00 / 00:00");
 
-    if let (Some(start), Some(total)) = (app.player.start_time, app.player.total_duration) {
-        let elapsed = start.elapsed();
+    // Using the new helper from AudioPlayer to get accurate sync time (handles pause)
+    if let Some(total) = app.player.total_duration {
+        let elapsed = app.player.get_current_time();
         let total_secs = total.as_secs_f64();
+
         if total_secs > 0.0 {
             ratio = (elapsed.as_secs_f64() / total_secs).min(1.0);
         }
