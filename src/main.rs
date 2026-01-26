@@ -7,7 +7,8 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
-use std::{error::Error, io, path::Path};
+use std::{io, path::Path};
+use anyhow::{Context, Result};
 
 mod app;
 mod audio;
@@ -18,26 +19,26 @@ use app::state::{App, InputMode, AppEvent};
 use scope::display::{update_value_f, update_value_i, DisplayMode};
 use audio::player::AudioPlayer;
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<()> {
     // Setup terminal
-    enable_raw_mode()?;
+    enable_raw_mode().context("Failed to enable raw mode")?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).context("Failed to enter alternate screen")?;
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
     // Create app and run it
     let app = App::new();
     let res = run_app(&mut terminal, app);
 
     // Restore terminal
-    disable_raw_mode()?;
+    disable_raw_mode().context("Failed to disable raw mode")?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    ).context("Failed to leave alternate screen")?;
+    terminal.show_cursor().context("Failed to show cursor")?;
 
     if let Err(err) = res {
         println!("{:?}", err)
@@ -46,10 +47,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), Box<dyn Error>>
+fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()>
 where <B as Backend>::Error: 'static {
     loop {
-        terminal.draw(|f| ui::layout::draw(f, &mut app)).map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Draw error: {}", e)))?;
+        terminal.draw(|f| ui::layout::draw(f, &mut app)).map_err(|e| anyhow::anyhow!("Draw error: {}", e))?;
 
         // Check for async events non-blockingly
         if let Ok(event) = app.event_rx.try_recv() {
@@ -84,7 +85,7 @@ where <B as Backend>::Error: 'static {
         }
 
         if event::poll(std::time::Duration::from_millis(16))? {
-            let event = event::read().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Event error: {}", e)))?;
+            let event = event::read().context("Event error")?;
 
             if app.current_tab == 4 {
                 app.oscilloscope.handle(event.clone());
