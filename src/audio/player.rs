@@ -19,6 +19,7 @@ pub struct AudioPlayer {
     pub audio_data: Matrix<f64>,
     pub sample_rate: u32,
     pub channels: usize,
+    pub is_streaming_mode: bool, // New flag for optimization
 
     // Playback Timing State
     pub start_time: Option<Instant>,
@@ -43,6 +44,7 @@ impl AudioPlayer {
             audio_data: vec![vec![0.0; 1024]; 2],
             sample_rate: 44100,
             channels: 2,
+            is_streaming_mode: false,
             start_time: None,
             elapsed_when_paused: Duration::from_secs(0),
             total_duration: None,
@@ -103,7 +105,6 @@ impl AudioPlayer {
             let temp_path = Path::new("stream_cache.mp3");
             match download_audio(&url, temp_path) {
                 Ok(_) => {
-                    // Send success with path
                     let _ = tx.send(AppEvent::AudioLoaded(temp_path.to_string_lossy().to_string()));
                 },
                 Err(e) => {
@@ -137,31 +138,80 @@ impl AudioPlayer {
                              self.sample_rate = source.sample_rate();
                              self.channels = source.channels() as usize;
 
-                             let samples: Vec<f32> = source.convert_samples().collect();
-                             let total_samples = samples.len() / self.channels;
-                             self.total_duration = Some(Duration::from_secs_f64(total_samples as f64 / self.sample_rate as f64));
+                             // Calculate duration properly?
+                             // Rodio source might support `total_duration()`.
+                             // MP3 decoder often returns None for total_duration until scanned.
+                             // We can estimate from file size if we knew bitrate, but let's try reading a bit.
+                             // Actually, if we want to optimize, we CANNOT run `convert_samples().collect()` on the whole file.
 
-                             // Re-open for playing
-                             if let Ok(file_play) = File::open(path) {
-                                 if let Ok(source_play) = Decoder::new(BufReader::new(file_play)) {
-                                     if let Some(handle) = &self._stream_handle {
-                                         if let Ok(new_sink) = Sink::try_new(handle) {
-                                             new_sink.set_volume(self.volume);
-                                             new_sink.append(source_play);
-                                             self.sink = Some(new_sink);
+                             // Strategy:
+                             // 1. Try to guess duration.
+                             // 2. If it seems long, or we just want to be safe, enable Streaming Mode.
+                             // 3. For now, we unfortunately need to iterate to know duration reliably for VBR MP3s without scanning.
+                             // BUT, we can just check file size as a heuristic for "Long file".
+                             // 10 minutes of MP3 128kbps is approx 10MB.
+                             // Let's say if file > 20MB, we assume it's long and skip loading.
 
-                                             // Reset timing
-                                             self.start_time = Some(Instant::now());
-                                             self.elapsed_when_paused = Duration::from_secs(0);
-                                             self.is_paused = false;
+                             let metadata = std::fs::metadata(path).ok();
+                             let file_size = metadata.map(|m| m.len()).unwrap_or(0);
+                             let threshold_bytes = 20 * 1024 * 1024; // 20 MB threshold
+
+                             // Re-open for playing (we consumed `source` for metadata check if we did, but we haven't yet)
+                             // Actually `source` is fresh here.
+
+                             if file_size > threshold_bytes {
+                                 // --- STREAMING MODE (Optimization) ---
+                                 self.is_streaming_mode = true;
+                                 self.audio_data = vec![Vec::new(); self.channels]; // Empty buffer
+                                 // We won't know exact total_duration easily without scanning.
+                                 // Let's guess or leave it None.
+                                 // If we leave it None, progress bar might break.
+                                 // We can approximate: 128kbps = 16KB/s roughly.
+                                 // Duration = size / 16000.
+                                 let approx_seconds = file_size / 16000;
+                                 self.total_duration = Some(Duration::from_secs(approx_seconds));
+
+                                 // We need to consume the `source` we created? No, we can use it.
+                                 // But we need a clone or reopen for Sink?
+                                 // Rodio Sink takes ownership of Source.
+                                 if let Some(handle) = &self._stream_handle {
+                                     if let Ok(new_sink) = Sink::try_new(handle) {
+                                         new_sink.set_volume(self.volume);
+                                         new_sink.append(source); // Use the source directly! No collecting!
+                                         self.sink = Some(new_sink);
+                                         self.start_time = Some(Instant::now());
+                                         self.elapsed_when_paused = Duration::from_secs(0);
+                                         self.is_paused = false;
+                                     }
+                                 }
+                             } else {
+                                 // --- FULL LOAD MODE (Visualizer Active) ---
+                                 self.is_streaming_mode = false;
+
+                                 let samples: Vec<f32> = source.convert_samples().collect(); // Expensive step!
+                                 let total_samples = samples.len() / self.channels;
+                                 self.total_duration = Some(Duration::from_secs_f64(total_samples as f64 / self.sample_rate as f64));
+
+                                 // We consumed source, so reopen for sink
+                                 if let Ok(file_play) = File::open(path) {
+                                     if let Ok(source_play) = Decoder::new(BufReader::new(file_play)) {
+                                         if let Some(handle) = &self._stream_handle {
+                                             if let Ok(new_sink) = Sink::try_new(handle) {
+                                                 new_sink.set_volume(self.volume);
+                                                 new_sink.append(source_play);
+                                                 self.sink = Some(new_sink);
+                                                 self.start_time = Some(Instant::now());
+                                                 self.elapsed_when_paused = Duration::from_secs(0);
+                                                 self.is_paused = false;
+                                             }
                                          }
                                      }
                                  }
-                             }
 
-                             self.audio_data = vec![Vec::new(); self.channels];
-                             for (i, sample) in samples.iter().enumerate() {
-                                 self.audio_data[i % self.channels].push(*sample as f64);
+                                 self.audio_data = vec![Vec::new(); self.channels];
+                                 for (i, sample) in samples.iter().enumerate() {
+                                     self.audio_data[i % self.channels].push(*sample as f64);
+                                 }
                              }
                         },
                         Err(e) => self.error_message = Some(format!("Format error: {}", e)),
@@ -188,18 +238,23 @@ impl AudioPlayer {
     }
 
     pub fn get_window(&self, window_size: usize) -> Matrix<f64> {
-        if self.is_paused {
+        // If paused or streaming (no data), return a flat line
+        if self.is_paused || self.is_streaming_mode {
             return vec![vec![0.0; window_size]; self.channels];
         }
 
         let elapsed_seconds = self.get_current_time().as_secs_f64();
         let start_sample = (elapsed_seconds * self.sample_rate as f64) as usize;
-        let end_sample = start_sample + window_size;
+
+        // Safety check if audio_data is empty (should cover streaming mode, but double check)
+        if self.audio_data.is_empty() || self.audio_data[0].is_empty() {
+             return vec![vec![0.0; window_size]; self.channels];
+        }
 
         let mut window = vec![Vec::new(); self.channels];
         for ch in 0..self.channels {
             if start_sample < self.audio_data[ch].len() {
-                let end = std::cmp::min(end_sample, self.audio_data[ch].len());
+                let end = std::cmp::min(start_sample + window_size, self.audio_data[ch].len());
                 window[ch] = self.audio_data[ch][start_sample..end].to_vec();
                 if window[ch].len() < window_size {
                      window[ch].resize(window_size, 0.0);
