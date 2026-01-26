@@ -49,9 +49,9 @@ impl App {
         let mut radio_state = ListState::default();
         radio_state.select(Some(3)); // Radio Freedom
 
-        let mut player = AudioPlayer::new();
+        let player = AudioPlayer::new();
         // Load default sync for now, async search will use the channel
-        player.load_source("audio.mp3");
+        // player.load_source("audio.mp3"); // Removed default local file loading
 
         let graph_config = GraphConfig {
             samples: 200,

@@ -6,7 +6,7 @@ use ratatui::{
 use crate::app::state::{App, InputMode};
 use crate::ui::theme::{PIPBOY_BG, PIPBOY_GREEN, COLOR_YELLOW, PIPBOY_DARK};
 
-pub fn render_input(app: &App) -> Paragraph {
+pub fn render_input(app: &App) -> Paragraph<'_> {
     let (msg, style) = match app.input_mode {
         InputMode::Normal => (
             vec![

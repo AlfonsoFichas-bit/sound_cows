@@ -4,7 +4,7 @@ use ratatui::{
 };
 use crate::ui::theme::{PIPBOY_BG, PIPBOY_DARK, PIPBOY_GREEN};
 
-pub fn render(radio_stations: &[String]) -> List {
+pub fn render(radio_stations: &[String]) -> List<'_> {
     let items: Vec<ListItem> = radio_stations
         .iter()
         .map(|station| {

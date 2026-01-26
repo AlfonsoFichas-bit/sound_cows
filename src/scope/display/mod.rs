@@ -18,11 +18,11 @@ pub enum Dimension {
 pub struct GraphConfig {
 	pub pause: bool,
 	pub samples: u32,
-	pub sampling_rate: u32,
+	#[allow(dead_code)]
+	pub sampling_rate: u32,  // Se mantiene porque es relevante para la visualización
 	pub scale: f64,
 	pub width: u32,
 	pub scatter: bool,
-	pub references: bool,
 	pub show_ui: bool,
 	pub marker_type: Marker,
 	pub palette: Vec<Color>,
@@ -42,19 +42,12 @@ impl GraphConfig {
 #[allow(clippy::ptr_arg)] // TODO temporarily! it's a shitty solution
 pub trait DisplayMode {
 	// MUST define
-	fn axis(&self, cfg: &GraphConfig, dimension: Dimension) -> Axis; // TODO simplify this
+	fn axis(&self, cfg: &GraphConfig, dimension: Dimension) -> Axis<'_>; // TODO simplify this
 	fn process(&mut self, cfg: &GraphConfig, data: &Matrix<f64>) -> Vec<DataSet>;
-	fn mode_str(&self) -> &'static str;
 
 	// SHOULD override
 	fn channel_name(&self, index: usize) -> String {
 		format!("{}", index)
-	}
-	fn header(&self, _cfg: &GraphConfig) -> String {
-		"".into()
-	}
-	fn references(&self, _cfg: &GraphConfig) -> Vec<DataSet> {
-		vec![]
 	}
 	fn handle(&mut self, _event: Event) {}
 }

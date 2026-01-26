@@ -6,7 +6,7 @@ use ratatui::{
 };
 use crate::ui::theme::{PIPBOY_BG, PIPBOY_DARK, PIPBOY_GREEN};
 
-pub fn render(app: &crate::app::state::App) -> Paragraph {
+pub fn render(app: &crate::app::state::App) -> Paragraph<'_> {
     let tabs = vec!["STAT", "INV", "DATA", "MAP", "RADIO"];
     let tab_spans: Vec<Span> = tabs
         .iter()

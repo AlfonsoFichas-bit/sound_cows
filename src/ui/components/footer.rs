@@ -1,12 +1,12 @@
 use ratatui::{
     layout::Alignment,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
 use crate::ui::theme::{COLOR_RED, COLOR_YELLOW, PIPBOY_BG, PIPBOY_GREEN};
 
-pub fn render(app: &crate::app::state::App) -> Paragraph {
+pub fn render(app: &crate::app::state::App) -> Paragraph<'_> {
     let mut footer_spans = vec![
         Span::styled("[Enter] ", Style::default().fg(PIPBOY_GREEN).add_modifier(Modifier::BOLD)),
         Span::styled("TURN OFF  ", Style::default().fg(COLOR_YELLOW)),

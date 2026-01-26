@@ -30,36 +30,7 @@ impl Default for Oscilloscope {
 }
 
 impl DisplayMode for Oscilloscope {
-	fn mode_str(&self) -> &'static str {
-		"oscillo"
-	}
-
-	fn channel_name(&self, index: usize) -> String {
-		match index {
-			0 => "L".into(),
-			1 => "R".into(),
-			_ => format!("{}", index),
-		}
-	}
-
-	fn header(&self, _: &GraphConfig) -> String {
-		if self.triggering {
-			format!(
-				"{} {:.0}{} trigger",
-				if self.falling_edge { "v" } else { "^" },
-				self.threshold,
-				if self.depth > 1 {
-					format!(":{}", self.depth)
-				} else {
-					"".into()
-				},
-			)
-		} else {
-			"live".into()
-		}
-	}
-
-	fn axis(&self, cfg: &GraphConfig, dimension: Dimension) -> Axis {
+	fn axis(&self, cfg: &GraphConfig, dimension: Dimension) -> Axis<'_> {
 		let (name, bounds) = match dimension {
 			Dimension::X => ("time -", [0.0, cfg.samples as f64]),
 			Dimension::Y => ("| amplitude", [-cfg.scale, cfg.scale]),
@@ -70,16 +41,6 @@ impl DisplayMode for Oscilloscope {
 			a = a.title(Span::styled(name, Style::default().fg(cfg.labels_color)));
 		}
 		a.style(Style::default().fg(cfg.axis_color)).bounds(bounds)
-	}
-
-	fn references(&self, cfg: &GraphConfig) -> Vec<DataSet> {
-		vec![DataSet::new(
-			None,
-			vec![(0.0, 0.0), (cfg.samples as f64, 0.0)],
-			cfg.marker_type,
-			GraphType::Line,
-			cfg.axis_color,
-		)]
 	}
 
 	fn process(&mut self, cfg: &GraphConfig, data: &Matrix<f64>) -> Vec<DataSet> {
@@ -148,6 +109,14 @@ impl DisplayMode for Oscilloscope {
 		}
 
 		out
+	}
+
+	fn channel_name(&self, index: usize) -> String {
+		match index {
+			0 => "L".into(),
+			1 => "R".into(),
+			_ => format!("{}", index),
+		}
 	}
 
 	fn handle(&mut self, event: Event) {

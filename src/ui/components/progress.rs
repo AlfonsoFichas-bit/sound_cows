@@ -12,7 +12,7 @@ fn format_time(duration: Duration) -> String {
     format!("{:02}:{:02}", minutes, seconds)
 }
 
-pub fn render(app: &crate::app::state::App) -> Gauge {
+pub fn render(app: &crate::app::state::App) -> Gauge<'_> {
     let mut ratio = 0.0;
     let mut label = String::from("00:00 / 00:00");
 

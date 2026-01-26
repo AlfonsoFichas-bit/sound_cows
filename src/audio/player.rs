@@ -32,7 +32,6 @@ pub struct AudioPlayer {
     // State
     pub is_paused: bool,
     pub volume: f32,
-    pub current_source: String,
 }
 
 impl AudioPlayer {
@@ -51,7 +50,6 @@ impl AudioPlayer {
             error_message: None,
             is_paused: false,
             volume: 1.0,
-            current_source: String::new(),
         };
 
         player.init();
@@ -75,12 +73,12 @@ impl AudioPlayer {
     }
 
     // Synchronous load (legacy / local)
+    #[allow(dead_code)]
     pub fn load_source(&mut self, path_or_url: &str) {
         if self.sink.is_none() {
             return;
         }
 
-        self.current_source = path_or_url.to_string();
         self.error_message = None;
 
         let path = if path_or_url.starts_with("http") {
