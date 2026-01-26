@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 ratatui = "0.30.0"
 crossterm = "0.29"
-rodio = "0.20.1"
+rodio = "0.21.1"
 # anyhow = "1.0.100"
 serde = "1.0.228"
 serde_derive = "1.0.228"

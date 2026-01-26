@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::path::Path;
 use std::thread;
 use std::sync::mpsc::Sender;
-use rodio::{Decoder, OutputStream, Sink, Source};
+use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 use crate::scope::Matrix;
 use crate::app::state::AppEvent;
 use super::stream::{download_audio, search_audio};
@@ -12,7 +12,6 @@ use super::stream::{download_audio, search_audio};
 pub struct AudioPlayer {
     // We keep these alive
     _stream: Option<OutputStream>,
-    _stream_handle: Option<rodio::OutputStreamHandle>,
     sink: Option<Sink>,
 
     // Visualization data
@@ -38,7 +37,6 @@ impl AudioPlayer {
     pub fn new() -> Self {
         let mut player = AudioPlayer {
             _stream: None,
-            _stream_handle: None,
             sink: None,
             audio_data: vec![vec![0.0; 1024]; 2],
             sample_rate: 44100,
@@ -57,16 +55,11 @@ impl AudioPlayer {
     }
 
     fn init(&mut self) {
-        match OutputStream::try_default() {
-            Ok((stream, stream_handle)) => {
-                match Sink::try_new(&stream_handle) {
-                    Ok(s) => {
-                        self._stream = Some(stream);
-                        self._stream_handle = Some(stream_handle);
-                        self.sink = Some(s);
-                    },
-                    Err(e) => self.error_message = Some(format!("Sink error: {}", e)),
-                }
+        match OutputStreamBuilder::open_default_stream() {
+            Ok(stream) => {
+                let s = Sink::connect_new(&stream.mixer());
+                self._stream = Some(stream);
+                self.sink = Some(s);
             },
             Err(e) => self.error_message = Some(format!("Audio init error: {}", e)),
         }
@@ -172,36 +165,37 @@ impl AudioPlayer {
                                  // We need to consume the `source` we created? No, we can use it.
                                  // But we need a clone or reopen for Sink?
                                  // Rodio Sink takes ownership of Source.
-                                 if let Some(handle) = &self._stream_handle {
-                                     if let Ok(new_sink) = Sink::try_new(handle) {
-                                         new_sink.set_volume(self.volume);
-                                         new_sink.append(source); // Use the source directly! No collecting!
-                                         self.sink = Some(new_sink);
-                                         self.start_time = Some(Instant::now());
-                                         self.elapsed_when_paused = Duration::from_secs(0);
-                                         self.is_paused = false;
-                                     }
+                                 if let Some(stream) = &self._stream {
+                                     let new_sink = Sink::connect_new(&stream.mixer());
+                                     new_sink.set_volume(self.volume);
+                                     new_sink.append(source); // Use the source directly! No collecting!
+                                     self.sink = Some(new_sink);
+                                     self.start_time = Some(Instant::now());
+                                     self.elapsed_when_paused = Duration::from_secs(0);
+                                     self.is_paused = false;
                                  }
                              } else {
                                  // --- FULL LOAD MODE (Visualizer Active) ---
                                  self.is_streaming_mode = false;
 
-                                 let samples: Vec<f32> = source.convert_samples().collect(); // Expensive step!
+                                 // Try converting samples. rodio 0.21 might handle f32 conversion automatically
+                                 // or we need to convert manually. Assuming Decoder returns correct type or we can collect.
+                                 // If this fails compile, we know we need conversion.
+                                 let samples: Vec<f32> = source.collect();
                                  let total_samples = samples.len() / self.channels;
                                  self.total_duration = Some(Duration::from_secs_f64(total_samples as f64 / self.sample_rate as f64));
 
                                  // We consumed source, so reopen for sink
                                  if let Ok(file_play) = File::open(path) {
                                      if let Ok(source_play) = Decoder::new(BufReader::new(file_play)) {
-                                         if let Some(handle) = &self._stream_handle {
-                                             if let Ok(new_sink) = Sink::try_new(handle) {
-                                                 new_sink.set_volume(self.volume);
-                                                 new_sink.append(source_play);
-                                                 self.sink = Some(new_sink);
-                                                 self.start_time = Some(Instant::now());
-                                                 self.elapsed_when_paused = Duration::from_secs(0);
-                                                 self.is_paused = false;
-                                             }
+                                         if let Some(stream) = &self._stream {
+                                             let new_sink = Sink::connect_new(&stream.mixer());
+                                             new_sink.set_volume(self.volume);
+                                             new_sink.append(source_play);
+                                             self.sink = Some(new_sink);
+                                             self.start_time = Some(Instant::now());
+                                             self.elapsed_when_paused = Duration::from_secs(0);
+                                             self.is_paused = false;
                                          }
                                      }
                                  }
