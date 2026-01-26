@@ -7,16 +7,16 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
-use std::{error::Error, io};
+use std::{error::Error, io, path::Path};
 
 mod app;
 mod audio;
 mod scope;
 mod ui;
 
-use app::state::{App, InputMode};
+use app::state::{App, InputMode, AppEvent};
 use scope::display::{update_value_f, update_value_i, DisplayMode};
-use audio::stream::search_audio;
+use audio::player::AudioPlayer;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Setup terminal
@@ -50,6 +50,38 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), B
 where <B as Backend>::Error: 'static {
     loop {
         terminal.draw(|f| ui::layout::draw(f, &mut app)).map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Draw error: {}", e)))?;
+
+        // Check for async events non-blockingly
+        if let Ok(event) = app.event_rx.try_recv() {
+            match event {
+                AppEvent::AudioLoaded(path) => {
+                    app.is_loading = false;
+                    app.player.play_file(Path::new(&path));
+                    app.loading_status = Some("Playing URL".to_string());
+                    app.current_tab = 4; // Switch to Radio
+                },
+                AppEvent::AudioError(e) => {
+                    app.is_loading = false;
+                    app.loading_status = Some(format!("Error: {}", e));
+                },
+                AppEvent::SearchFinished(results) => {
+                    app.is_loading = false;
+                    app.search_results = results;
+                    app.loading_status = Some(format!("Found {} results", app.search_results.len()));
+                    if !app.search_results.is_empty() {
+                        app.search_results_state.select(Some(0));
+                        app.input_mode = InputMode::SearchResults;
+                    } else {
+                        app.input_mode = InputMode::Normal;
+                    }
+                },
+                AppEvent::SearchError(e) => {
+                    app.is_loading = false;
+                    app.loading_status = Some(format!("Search Error: {}", e));
+                    app.input_mode = InputMode::Normal;
+                }
+            }
+        }
 
         if event::poll(std::time::Duration::from_millis(16))? {
             let event = event::read().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Event error: {}", e)))?;
@@ -109,44 +141,26 @@ where <B as Backend>::Error: 'static {
                                 let query = app.search_input.clone();
 
                                 if query.starts_with("http://") || query.starts_with("https://") {
-                                    // Direct URL handling
+                                    // Direct URL handling - Async
                                     app.loading_status = Some(format!("Downloading URL: {}...", query));
-                                    terminal.draw(|f| ui::layout::draw(f, &mut app))?;
+                                    app.is_loading = true;
 
-                                    app.player.load_source(&query);
-
-                                    if app.player.error_message.is_some() {
-                                        app.loading_status = Some("Download failed".to_string());
-                                    } else {
-                                        app.loading_status = Some("Playing URL".to_string());
-                                        app.current_tab = 4; // Switch to Radio
-                                    }
+                                    // Need to pass the sender to the static function.
+                                    // app.player.load_source_async needs to be static or we clone sender
+                                    let tx = app.event_tx.clone();
+                                    AudioPlayer::load_source_async(query, tx);
 
                                     app.search_input.clear();
                                     app.reset_cursor();
                                     app.input_mode = InputMode::Normal;
 
                                 } else {
-                                    // Search Query handling
+                                    // Search Query handling - Async
                                     app.loading_status = Some(format!("Searching: {}...", query));
-                                    terminal.draw(|f| ui::layout::draw(f, &mut app))?;
+                                    app.is_loading = true;
 
-                                    match search_audio(&query) {
-                                        Ok(results) => {
-                                            app.search_results = results;
-                                            app.loading_status = Some(format!("Found {} results", app.search_results.len()));
-                                            if !app.search_results.is_empty() {
-                                                app.search_results_state.select(Some(0));
-                                                app.input_mode = InputMode::SearchResults;
-                                            } else {
-                                                app.input_mode = InputMode::Normal;
-                                            }
-                                        },
-                                        Err(e) => {
-                                            app.loading_status = Some(format!("Error: {}", e));
-                                            app.input_mode = InputMode::Normal;
-                                        }
-                                    }
+                                    let tx = app.event_tx.clone();
+                                    AudioPlayer::search_async(query, tx);
 
                                     app.search_input.clear();
                                     app.reset_cursor();
@@ -187,16 +201,10 @@ where <B as Backend>::Error: 'static {
 
                                 if let Some((title, url)) = selected_track {
                                     app.loading_status = Some(format!("Downloading: {}...", title));
-                                    terminal.draw(|f| ui::layout::draw(f, &mut app))?;
+                                    app.is_loading = true;
 
-                                    app.player.load_source(&url);
-
-                                    if app.player.error_message.is_some() {
-                                         app.loading_status = Some("Download failed".to_string());
-                                    } else {
-                                         app.loading_status = Some(format!("Playing: {}", title));
-                                         app.current_tab = 4;
-                                    }
+                                    let tx = app.event_tx.clone();
+                                    AudioPlayer::load_source_async(url, tx);
 
                                     app.input_mode = InputMode::Normal;
                                 }

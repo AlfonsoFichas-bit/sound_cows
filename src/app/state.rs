@@ -2,11 +2,20 @@ use ratatui::{style::Color, widgets::ListState};
 use crate::audio::player::AudioPlayer;
 use crate::scope::display::{oscilloscope::Oscilloscope, GraphConfig};
 use crate::ui::theme::{PIPBOY_GREEN, COLOR_RED};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub enum InputMode {
     Normal,
     Editing,
-    SearchResults, // New mode for navigating results
+    SearchResults,
+}
+
+// Events sent from background threads to the main UI thread
+pub enum AppEvent {
+    AudioLoaded(String), // Path to file
+    AudioError(String),
+    SearchFinished(Vec<(String, String)>), // Results
+    SearchError(String),
 }
 
 pub struct App {
@@ -24,10 +33,15 @@ pub struct App {
     pub search_input: String,
     pub cursor_position: usize,
     pub loading_status: Option<String>,
+    pub is_loading: bool, // General loading spinner flag
 
     // Search Results
-    pub search_results: Vec<(String, String)>, // (Title, URL)
+    pub search_results: Vec<(String, String)>,
     pub search_results_state: ListState,
+
+    // Async Communication
+    pub event_tx: Sender<AppEvent>,
+    pub event_rx: Receiver<AppEvent>,
 }
 
 impl App {
@@ -36,7 +50,8 @@ impl App {
         radio_state.select(Some(3)); // Radio Freedom
 
         let mut player = AudioPlayer::new();
-        player.load_source("audio.mp3"); // Load local by default
+        // Load default sync for now, async search will use the channel
+        player.load_source("audio.mp3");
 
         let graph_config = GraphConfig {
             samples: 200,
@@ -49,6 +64,8 @@ impl App {
             palette: vec![PIPBOY_GREEN, COLOR_RED],
             ..Default::default()
         };
+
+        let (event_tx, event_rx) = channel();
 
         App {
             current_tab: 4, // RADIO tab
@@ -72,8 +89,11 @@ impl App {
             search_input: String::new(),
             cursor_position: 0,
             loading_status: None,
+            is_loading: false,
             search_results: Vec::new(),
             search_results_state: ListState::default(),
+            event_tx,
+            event_rx,
         }
     }
 

@@ -2,9 +2,12 @@ use std::fs::File;
 use std::io::BufReader;
 use std::time::{Duration, Instant};
 use std::path::Path;
+use std::thread;
+use std::sync::mpsc::Sender;
 use rodio::{Decoder, OutputStream, Sink, Source};
 use crate::scope::Matrix;
-use super::stream::download_audio;
+use crate::app::state::AppEvent;
+use super::stream::{download_audio, search_audio};
 
 pub struct AudioPlayer {
     // We keep these alive
@@ -69,6 +72,7 @@ impl AudioPlayer {
         }
     }
 
+    // Synchronous load (legacy / local)
     pub fn load_source(&mut self, path_or_url: &str) {
         if self.sink.is_none() {
             return;
@@ -93,7 +97,36 @@ impl AudioPlayer {
         self.play_file(path);
     }
 
-    fn play_file(&mut self, path: &Path) {
+    // Async load wrapper
+    pub fn load_source_async(url: String, tx: Sender<AppEvent>) {
+        thread::spawn(move || {
+            let temp_path = Path::new("stream_cache.mp3");
+            match download_audio(&url, temp_path) {
+                Ok(_) => {
+                    // Send success with path
+                    let _ = tx.send(AppEvent::AudioLoaded(temp_path.to_string_lossy().to_string()));
+                },
+                Err(e) => {
+                    let _ = tx.send(AppEvent::AudioError(e));
+                }
+            }
+        });
+    }
+
+    pub fn search_async(query: String, tx: Sender<AppEvent>) {
+        thread::spawn(move || {
+            match search_audio(&query) {
+                Ok(results) => {
+                    let _ = tx.send(AppEvent::SearchFinished(results));
+                },
+                Err(e) => {
+                    let _ = tx.send(AppEvent::SearchError(e));
+                }
+            }
+        });
+    }
+
+    pub fn play_file(&mut self, path: &Path) {
         if let Some(sink) = &self.sink {
             sink.stop();
 
@@ -155,7 +188,6 @@ impl AudioPlayer {
     }
 
     pub fn get_window(&self, window_size: usize) -> Matrix<f64> {
-        // If paused, return a flat line (buffer of zeros)
         if self.is_paused {
             return vec![vec![0.0; window_size]; self.channels];
         }
