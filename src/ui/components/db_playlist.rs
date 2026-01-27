@@ -1,7 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Style, Modifier},
-    text::{Span, Line, Text},
+    text::{Span, Line},
     layout::Position,
     widgets::{Block, Borders, List, ListItem, Paragraph, Clear},
     Frame,

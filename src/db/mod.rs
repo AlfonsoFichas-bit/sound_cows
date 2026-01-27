@@ -14,7 +14,9 @@ pub struct Playlist {
 
 #[derive(Debug, Clone)]
 pub struct PlaylistEntry {
+    #[allow(dead_code)]
     pub id: i64,
+    #[allow(dead_code)]
     pub playlist_id: i64,
     pub url: String,
     pub title: String,
@@ -90,6 +92,7 @@ impl Database {
         Ok(playlists)
     }
 
+    #[allow(dead_code)]
     pub fn add_song(&self, playlist_id: i64, url: &str, title: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
 

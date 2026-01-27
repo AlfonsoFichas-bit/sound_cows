@@ -292,4 +292,12 @@ impl AudioPlayer {
     pub fn volume_down(&mut self) {
         self.set_volume(self.volume - 0.1);
     }
+
+    pub fn is_empty(&self) -> bool {
+        if let Some(sink) = &self.sink {
+            sink.empty()
+        } else {
+            true
+        }
+    }
 }

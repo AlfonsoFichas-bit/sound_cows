@@ -44,11 +44,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             content_chunks[1],
             &mut app.search_results_state
         );
-    } else if app.current_tab == 5 {
-        // PLAYLISTS Tab
+    } else if app.current_tab == 1 {
+        // INV Tab - Playlists
         components::db_playlist::draw_playlists(f, app, chunks[1]);
     } else {
-        // RADIO Tab (Default Layout)
+        // RADIO Tab (Default Layout) - Also fallback for STAT/MAP for now
         let content_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([

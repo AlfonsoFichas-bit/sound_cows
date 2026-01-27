@@ -85,6 +85,11 @@ where <B as Backend>::Error: 'static {
             }
         }
 
+        if app.player.is_empty() && !app.player.is_paused {
+             app.player.toggle_pause(); // Stop the timer if audio finished
+             // Ideally we reset to start or load next song here
+        }
+
         if event::poll(std::time::Duration::from_millis(16))? {
             let event = event::read().context("Event error")?;
 
@@ -136,10 +141,10 @@ where <B as Backend>::Error: 'static {
                             KeyCode::Tab => app.next_tab(),
 
                             // Playlist specific normal mode
-                            KeyCode::Char('p') if app.current_tab == 5 => {
+                            KeyCode::Char('p') if app.current_tab == 1 => {
                                 app.input_mode = InputMode::PlaylistNameInput;
                             },
-                            KeyCode::Enter if app.current_tab == 5 => {
+                            KeyCode::Enter if app.current_tab == 1 => {
                                 if let Some(selected_idx) = app.playlist_state.selected() {
                                     if let Some(playlist) = app.playlists.get(selected_idx) {
                                         app.viewing_playlist_id = Some(playlist.id);
@@ -154,7 +159,7 @@ where <B as Backend>::Error: 'static {
                                     }
                                 }
                             },
-                            KeyCode::Char('r') if app.current_tab == 5 => {
+                            KeyCode::Char('r') if app.current_tab == 1 => {
                                 // Refresh playlists
                                 if let Some(db) = &app.db {
                                     if let Ok(playlists) = db.get_playlists() {

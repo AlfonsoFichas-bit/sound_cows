@@ -157,12 +157,12 @@ impl App {
     }
 
     pub fn next_tab(&mut self) {
-        self.current_tab = (self.current_tab + 1) % 6; // Increased to 6 tabs (index 5 is playlists)
+        self.current_tab = (self.current_tab + 1) % 5;
     }
 
     pub fn previous_tab(&mut self) {
         if self.current_tab == 0 {
-            self.current_tab = 5;
+            self.current_tab = 4;
         } else {
             self.current_tab -= 1;
         }
