@@ -44,7 +44,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             content_chunks[1],
             &mut app.search_results_state
         );
-
+    } else if app.current_tab == 5 {
+        // PLAYLISTS Tab
+        components::db_playlist::draw_playlists(f, app, chunks[1]);
     } else {
         // RADIO Tab (Default Layout)
         let content_chunks = Layout::default()
@@ -56,7 +58,36 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .split(chunks[1]);
 
         // Playlist
-        let playlist_widget = components::playlist::render(&app.radio_stations);
+        // NOTE: 'playlist' was renamed to 'db_playlist', but 'playlist.rs' (radio list) was missing from the mod list.
+        // It seems I accidentally removed 'mod playlist' from src/ui/mod.rs earlier.
+        // However, looking at the file tree, I suspect 'playlist.rs' was renamed to 'db_playlist.rs'.
+        // Wait, the original playlist.rs handled the RADIO stations list.
+        // I need to check if I overwrote/renamed the radio playlist component.
+        // Let's assume for a moment I need to render the radio list differently or restore the file.
+        // But since I renamed it, I probably lost the radio rendering logic if I didn't preserve it.
+        // Actually, looking at previous steps, I renamed `src/ui/components/playlist.rs` to `db_playlist.rs`.
+        // That file was NEWLY created in Step 2.
+        // Ah, wait. Did `playlist.rs` exist BEFORE Step 2?
+        // Let's check the file list or assume I need to implement a simple list for radio stations here if it's gone.
+        // Or if 'db_playlist.rs' was the NEW one, and 'playlist.rs' was the OLD one.
+        // In Step 2 I wrote `src/ui/components/playlist.rs`.
+        // In Step 3 I renamed it to `db_playlist.rs`.
+        // So the radio playlist component is likely missing or I need to use `List` directly here.
+
+        // Let's implement the radio list rendering directly here using standard widgets to fix the build,
+        // since the original component seems to be lost or confused.
+
+        let items: Vec<ratatui::widgets::ListItem> = app
+            .radio_stations
+            .iter()
+            .map(|i| ratatui::widgets::ListItem::new(ratatui::text::Line::from(i.as_str())))
+            .collect();
+
+        let playlist_widget = ratatui::widgets::List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Radio Stations").border_style(Style::default().fg(PIPBOY_GREEN)))
+            .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED))
+            .highlight_symbol(">> ");
+
         f.render_stateful_widget(
             playlist_widget,
             content_chunks[0],

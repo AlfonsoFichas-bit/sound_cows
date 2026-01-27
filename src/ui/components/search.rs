@@ -30,6 +30,10 @@ pub fn render_input(app: &App) -> Paragraph<'_> {
             ],
             Style::default().fg(PIPBOY_GREEN),
         ),
+        _ => (
+            vec![Span::raw("Press '/' to search.")],
+            Style::default().fg(PIPBOY_GREEN),
+        ),
     };
 
     let mut text = vec![Line::from(msg)];

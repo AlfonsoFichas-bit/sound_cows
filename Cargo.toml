@@ -7,7 +7,7 @@ edition = "2024"
 ratatui = "0.30.0"
 crossterm = "0.29"
 rodio = "0.21.1"
-duckdb = { version = "1.1.1", features = ["bundled"] }
+duckdb = { version = "1.4.4", features = ["bundled"] }
 anyhow = "1.0.100"
 serde = "1.0.228"
 serde_derive = "1.0.228"

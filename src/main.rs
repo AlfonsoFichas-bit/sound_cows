@@ -134,8 +134,108 @@ where <B as Backend>::Error: 'static {
                             KeyCode::Left if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_tab(),
                             KeyCode::Right if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_tab(),
                             KeyCode::Tab => app.next_tab(),
+
+                            // Playlist specific normal mode
+                            KeyCode::Char('p') if app.current_tab == 5 => {
+                                app.input_mode = InputMode::PlaylistNameInput;
+                            },
+                            KeyCode::Enter if app.current_tab == 5 => {
+                                if let Some(selected_idx) = app.playlist_state.selected() {
+                                    if let Some(playlist) = app.playlists.get(selected_idx) {
+                                        app.viewing_playlist_id = Some(playlist.id);
+                                        // Load songs
+                                        if let Some(db) = &app.db {
+                                            if let Ok(songs) = db.get_songs(playlist.id) {
+                                                app.playlist_songs = songs;
+                                                app.playlist_songs_state.select(Some(0));
+                                                app.input_mode = InputMode::PlaylistNavigation;
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            KeyCode::Char('r') if app.current_tab == 5 => {
+                                // Refresh playlists
+                                if let Some(db) = &app.db {
+                                    if let Ok(playlists) = db.get_playlists() {
+                                        app.playlists = playlists;
+                                        if !app.playlists.is_empty() && app.playlist_state.selected().is_none() {
+                                             app.playlist_state.select(Some(0));
+                                        }
+                                    }
+                                }
+                            },
                             _ => {}
                         }
+                    },
+                    InputMode::PlaylistNameInput => {
+                         match key.code {
+                            KeyCode::Enter => {
+                                let name = app.playlist_input_name.clone();
+                                if !name.trim().is_empty() {
+                                     if let Some(db) = &app.db {
+                                         if let Err(e) = db.create_playlist(&name) {
+                                             app.loading_status = Some(format!("Error creating playlist: {}", e));
+                                         } else {
+                                             app.loading_status = Some(format!("Created playlist: {}", name));
+                                             // Refresh
+                                             if let Ok(playlists) = db.get_playlists() {
+                                                app.playlists = playlists;
+                                             }
+                                         }
+                                     }
+                                }
+                                app.playlist_input_name.clear();
+                                app.input_mode = InputMode::Normal;
+                            },
+                            KeyCode::Esc => {
+                                app.playlist_input_name.clear();
+                                app.input_mode = InputMode::Normal;
+                            },
+                            KeyCode::Backspace => {
+                                app.playlist_input_name.pop();
+                            },
+                            KeyCode::Char(c) => {
+                                app.playlist_input_name.push(c);
+                            },
+                            _ => {}
+                         }
+                    },
+                    InputMode::PlaylistNavigation => {
+                         match key.code {
+                            KeyCode::Down => {
+                                let i = match app.playlist_songs_state.selected() {
+                                    Some(i) => if i >= app.playlist_songs.len().saturating_sub(1) { 0 } else { i + 1 },
+                                    None => 0,
+                                };
+                                app.playlist_songs_state.select(Some(i));
+                            },
+                            KeyCode::Up => {
+                                let i = match app.playlist_songs_state.selected() {
+                                    Some(i) => if i == 0 { app.playlist_songs.len().saturating_sub(1) } else { i - 1 },
+                                    None => 0,
+                                };
+                                app.playlist_songs_state.select(Some(i));
+                            },
+                            KeyCode::Esc => {
+                                app.input_mode = InputMode::Normal;
+                                app.viewing_playlist_id = None;
+                                app.playlist_songs.clear();
+                            },
+                            KeyCode::Enter => {
+                                // Play selected song
+                                if let Some(idx) = app.playlist_songs_state.selected() {
+                                    if let Some(song) = app.playlist_songs.get(idx).cloned() {
+                                         app.loading_status = Some(format!("Playing: {}...", song.title));
+                                         app.is_loading = true;
+
+                                         let tx = app.event_tx.clone();
+                                         AudioPlayer::load_source_async(song.url, tx);
+                                    }
+                                }
+                            },
+                             _ => {}
+                         }
                     },
                     InputMode::Editing => {
                         match key.code {

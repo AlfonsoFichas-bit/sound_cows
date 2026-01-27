@@ -2,13 +2,15 @@ use ratatui::{style::Color, widgets::ListState};
 use crate::audio::player::AudioPlayer;
 use crate::scope::display::{oscilloscope::Oscilloscope, GraphConfig};
 use crate::ui::theme::{PIPBOY_GREEN, COLOR_RED};
-use crate::db::Database;
+use crate::db::{Database, Playlist, PlaylistEntry};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub enum InputMode {
     Normal,
     Editing,
     SearchResults,
+    PlaylistNameInput,
+    PlaylistNavigation,
 }
 
 // Events sent from background threads to the main UI thread
@@ -42,6 +44,14 @@ pub struct App {
 
     // Database
     pub db: Option<Database>,
+
+    // Playlist UI State
+    pub playlists: Vec<Playlist>,
+    pub playlist_state: ListState,
+    pub playlist_songs: Vec<PlaylistEntry>,
+    pub playlist_songs_state: ListState,
+    pub playlist_input_name: String,
+    pub viewing_playlist_id: Option<i64>, // If some, we are viewing songs in this playlist
 
     // Async Communication
     pub event_tx: Sender<AppEvent>,
@@ -107,6 +117,12 @@ impl App {
             search_results: Vec::new(),
             search_results_state: ListState::default(),
             db,
+            playlists: Vec::new(),
+            playlist_state: ListState::default(),
+            playlist_songs: Vec::new(),
+            playlist_songs_state: ListState::default(),
+            playlist_input_name: String::new(),
+            viewing_playlist_id: None,
             event_tx,
             event_rx,
         }
@@ -141,12 +157,12 @@ impl App {
     }
 
     pub fn next_tab(&mut self) {
-        self.current_tab = (self.current_tab + 1) % 5;
+        self.current_tab = (self.current_tab + 1) % 6; // Increased to 6 tabs (index 5 is playlists)
     }
 
     pub fn previous_tab(&mut self) {
         if self.current_tab == 0 {
-            self.current_tab = 4;
+            self.current_tab = 5;
         } else {
             self.current_tab -= 1;
         }
