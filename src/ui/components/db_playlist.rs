@@ -92,6 +92,38 @@ pub fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
             area.y + 1,
         ));
     }
+
+    // --- Select Playlist Modal (Add Song) ---
+    if let InputMode::SelectPlaylistToAdd = app.input_mode {
+        if let Some((title, _)) = &app.song_to_add {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" Add '{}' to... ", title))
+                .style(Style::default().fg(PIPBOY_YELLOW));
+
+            let area = centered_rect(60, 40, f.area());
+            f.render_widget(Clear, area);
+            f.render_widget(block.clone(), area);
+
+            let inner_area = block.inner(area);
+
+            let playlists: Vec<ListItem> = app
+                .playlists
+                .iter()
+                .map(|p| {
+                    ListItem::new(Line::from(vec![
+                        Span::raw(format!("> {}", p.name)),
+                    ]))
+                })
+                .collect();
+
+            let list = List::new(playlists)
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                .highlight_symbol(">> ");
+
+            f.render_stateful_widget(list, inner_area, &mut app.playlist_state);
+        }
+    }
 }
 
 // Helper for centering the modal

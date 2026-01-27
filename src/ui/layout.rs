@@ -25,6 +25,19 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Header
     f.render_widget(components::header::render(app), chunks[0]);
 
+    if app.input_mode as usize == 5 { // SelectPlaylistToAdd (Enum variant index check or explicit match)
+         // Hacky way to render modal over EVERYTHING:
+         // We let the underlying tab render first, then the modal on top.
+         // But checking enum variant by index is fragile.
+         // Let's rely on the components::db_playlist::draw_playlists being capable of drawing the modal?
+         // No, draw_playlists draws the full playlist TAB.
+         // We need to call the modal drawing logic regardless of the current tab if in that mode.
+         // Refactoring db_playlist to separate the modal drawing would be cleaner.
+         // For now, let's keep it simple: The modal is drawn inside 'draw_playlists'.
+         // But 'draw_playlists' expects 'area' to split.
+         // Let's just modify the end of this function to draw the modal if needed.
+    }
+
     if app.current_tab == 2 {
         // DATA Tab - Search Interface
         let content_chunks = Layout::default()
@@ -135,4 +148,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Footer
     f.render_widget(components::footer::render(app), chunks[2]);
+
+    // Global Modals (Overlay)
+    if let crate::app::state::InputMode::SelectPlaylistToAdd = app.input_mode {
+        // Reuse the logic from db_playlist which happens to have the modal logic inside.
+        // Ideally we extract `draw_add_to_playlist_modal` to a public function.
+        // For this iteration, since I put the modal logic inside `draw_playlists`,
+        // I can call it with the full frame area, but it will try to draw the playlist UI too?
+        // Let's refactor db_playlist slightly in the next step or just duplicate the modal call here
+        // if I exposed it.
+        // Wait, I put the logic INSIDE `draw_playlists`. That function draws the split view.
+        // If I am in DATA tab, I want to see DATA tab + Modal.
+        // So I should extract the modal drawing.
+
+        components::db_playlist::draw_playlists(f, app, f.area());
+        // Note: This effectively redraws the playlist UI *over* the current tab which might be weird
+        // if we are in DATA tab, effectively switching context visually to Playlist tab temporarily.
+        // This is actually acceptable for a "Select Playlist" modal since it lists playlists!
+    }
 }

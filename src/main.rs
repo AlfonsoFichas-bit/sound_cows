@@ -140,6 +140,38 @@ where <B as Backend>::Error: 'static {
                             KeyCode::Right if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_tab(),
                             KeyCode::Tab => app.next_tab(),
 
+                            // Add to Playlist (Global for Normal Mode)
+                            KeyCode::Char('a') => {
+                                let song_info = if app.current_tab == 2 {
+                                     // In DATA tab: use selected search result
+                                     if let Some(selected_idx) = app.search_results_state.selected() {
+                                         app.search_results.get(selected_idx).cloned()
+                                     } else {
+                                         None
+                                     }
+                                } else {
+                                    // Default/Radio tab: Current playing?
+                                    // For now, let's strictly support adding from Search Results as "Radio"
+                                    // stations are hardcoded strings, not DB entries yet.
+                                    None
+                                };
+
+                                if let Some((title, url)) = song_info {
+                                    app.song_to_add = Some((title, url));
+
+                                    // Load playlists to select
+                                    if let Some(db) = &app.db {
+                                        if let Ok(playlists) = db.get_playlists() {
+                                            app.playlists = playlists;
+                                            app.playlist_state.select(Some(0));
+                                            app.input_mode = InputMode::SelectPlaylistToAdd;
+                                        }
+                                    }
+                                } else {
+                                     app.loading_status = Some("Select a song in Search results to add.".to_string());
+                                }
+                            },
+
                             // Playlist specific normal mode
                             KeyCode::Char('p') if app.current_tab == 1 => {
                                 app.input_mode = InputMode::PlaylistNameInput;
@@ -205,6 +237,46 @@ where <B as Backend>::Error: 'static {
                             },
                             _ => {}
                          }
+                    },
+                    InputMode::SelectPlaylistToAdd => {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.input_mode = InputMode::Normal;
+                                app.song_to_add = None;
+                            },
+                            KeyCode::Down => {
+                                let i = match app.playlist_state.selected() {
+                                    Some(i) => if i >= app.playlists.len().saturating_sub(1) { 0 } else { i + 1 },
+                                    None => 0,
+                                };
+                                app.playlist_state.select(Some(i));
+                            },
+                            KeyCode::Up => {
+                                let i = match app.playlist_state.selected() {
+                                    Some(i) => if i == 0 { app.playlists.len().saturating_sub(1) } else { i - 1 },
+                                    None => 0,
+                                };
+                                app.playlist_state.select(Some(i));
+                            },
+                            KeyCode::Enter => {
+                                if let Some(idx) = app.playlist_state.selected() {
+                                    if let Some(playlist) = app.playlists.get(idx) {
+                                        if let Some((title, url)) = &app.song_to_add {
+                                            if let Some(db) = &app.db {
+                                                if let Err(e) = db.add_song(playlist.id, url, title) {
+                                                    app.loading_status = Some(format!("Error adding song: {}", e));
+                                                } else {
+                                                    app.loading_status = Some(format!("Added '{}' to '{}'", title, playlist.name));
+                                                    app.input_mode = InputMode::Normal;
+                                                    app.song_to_add = None;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            _ => {}
+                        }
                     },
                     InputMode::PlaylistNavigation => {
                          match key.code {

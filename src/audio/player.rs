@@ -65,30 +65,6 @@ impl AudioPlayer {
         }
     }
 
-    // Synchronous load (legacy / local)
-    #[allow(dead_code)]
-    pub fn load_source(&mut self, path_or_url: &str) {
-        if self.sink.is_none() {
-            return;
-        }
-
-        self.error_message = None;
-
-        let path = if path_or_url.starts_with("http") {
-            let temp_path = Path::new("stream_cache.mp3");
-            match download_audio(path_or_url, temp_path) {
-                Ok(_) => temp_path,
-                Err(e) => {
-                    self.error_message = Some(e);
-                    return;
-                }
-            }
-        } else {
-            Path::new(path_or_url)
-        };
-
-        self.play_file(path);
-    }
 
     // Async load wrapper
     pub fn load_source_async(url: String, tx: Sender<AppEvent>) {
