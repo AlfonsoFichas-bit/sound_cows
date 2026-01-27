@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 
 mod app;
 mod audio;
+mod db;
 mod scope;
 mod ui;
 

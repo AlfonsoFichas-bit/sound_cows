@@ -2,6 +2,7 @@ use ratatui::{style::Color, widgets::ListState};
 use crate::audio::player::AudioPlayer;
 use crate::scope::display::{oscilloscope::Oscilloscope, GraphConfig};
 use crate::ui::theme::{PIPBOY_GREEN, COLOR_RED};
+use crate::db::Database;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub enum InputMode {
@@ -39,6 +40,9 @@ pub struct App {
     pub search_results: Vec<(String, String)>,
     pub search_results_state: ListState,
 
+    // Database
+    pub db: Option<Database>,
+
     // Async Communication
     pub event_tx: Sender<AppEvent>,
     pub event_rx: Receiver<AppEvent>,
@@ -67,6 +71,16 @@ impl App {
 
         let (event_tx, event_rx) = channel();
 
+        let db = match Database::new() {
+            Ok(db) => Some(db),
+            Err(e) => {
+                // We don't want to crash if DB fails, but we should log/display it
+                // For now, we just print to stderr
+                eprintln!("Failed to initialize database: {}", e);
+                None
+            }
+        };
+
         App {
             current_tab: 4, // RADIO tab
             radio_state,
@@ -92,6 +106,7 @@ impl App {
             is_loading: false,
             search_results: Vec::new(),
             search_results_state: ListState::default(),
+            db,
             event_tx,
             event_rx,
         }
