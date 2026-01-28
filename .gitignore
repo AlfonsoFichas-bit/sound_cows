@@ -4,7 +4,3 @@
 .idea/
 .vscode/
 audio.mp3
-*.mp3
-*.db
-*.db-wal
-*.db-shm

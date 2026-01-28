@@ -25,19 +25,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Header
     f.render_widget(components::header::render(app), chunks[0]);
 
-    if app.input_mode as usize == 5 { // SelectPlaylistToAdd (Enum variant index check or explicit match)
-         // Hacky way to render modal over EVERYTHING:
-         // We let the underlying tab render first, then the modal on top.
-         // But checking enum variant by index is fragile.
-         // Let's rely on the components::db_playlist::draw_playlists being capable of drawing the modal?
-         // No, draw_playlists draws the full playlist TAB.
-         // We need to call the modal drawing logic regardless of the current tab if in that mode.
-         // Refactoring db_playlist to separate the modal drawing would be cleaner.
-         // For now, let's keep it simple: The modal is drawn inside 'draw_playlists'.
-         // But 'draw_playlists' expects 'area' to split.
-         // Let's just modify the end of this function to draw the modal if needed.
-    }
-
     if app.current_tab == 2 {
         // DATA Tab - Search Interface
         let content_chunks = Layout::default()
@@ -57,53 +44,64 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             content_chunks[1],
             &mut app.search_results_state
         );
-    } else if app.current_tab == 1 {
-        // INV Tab - Playlists
-        components::db_playlist::draw_playlists(f, app, chunks[1]);
+
     } else {
-        // RADIO Tab (Default Layout) - Also fallback for STAT/MAP for now
+        // RADIO Tab (Default Layout)
         let content_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(65),  // Left panel (radio list)
+                Constraint::Percentage(65),  // Left panel (Now Playing + Queue)
                 Constraint::Percentage(35),  // Right panel (waveform + controls)
             ])
             .split(chunks[1]);
 
-        // Playlist
-        // NOTE: 'playlist' was renamed to 'db_playlist', but 'playlist.rs' (radio list) was missing from the mod list.
-        // It seems I accidentally removed 'mod playlist' from src/ui/mod.rs earlier.
-        // However, looking at the file tree, I suspect 'playlist.rs' was renamed to 'db_playlist.rs'.
-        // Wait, the original playlist.rs handled the RADIO stations list.
-        // I need to check if I overwrote/renamed the radio playlist component.
-        // Let's assume for a moment I need to render the radio list differently or restore the file.
-        // But since I renamed it, I probably lost the radio rendering logic if I didn't preserve it.
-        // Actually, looking at previous steps, I renamed `src/ui/components/playlist.rs` to `db_playlist.rs`.
-        // That file was NEWLY created in Step 2.
-        // Ah, wait. Did `playlist.rs` exist BEFORE Step 2?
-        // Let's check the file list or assume I need to implement a simple list for radio stations here if it's gone.
-        // Or if 'db_playlist.rs' was the NEW one, and 'playlist.rs' was the OLD one.
-        // In Step 2 I wrote `src/ui/components/playlist.rs`.
-        // In Step 3 I renamed it to `db_playlist.rs`.
-        // So the radio playlist component is likely missing or I need to use `List` directly here.
+        // Left Panel Split (Now Playing / Queue)
+        let left_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(30), // Now Playing
+                Constraint::Percentage(70), // Queue
+            ])
+            .split(content_chunks[0]);
 
-        // Let's implement the radio list rendering directly here using standard widgets to fix the build,
-        // since the original component seems to be lost or confused.
+        // --- Now Playing ---
+        let now_playing_text = if let Some(song) = &app.now_playing {
+            vec![
+                ratatui::text::Line::from(ratatui::text::Span::styled(format!("Title: {}", song.title), Style::default().add_modifier(ratatui::style::Modifier::BOLD).fg(crate::ui::theme::COLOR_YELLOW))),
+                ratatui::text::Line::from(format!("Artist: {}", song.artist)),
+                ratatui::text::Line::from(format!("Album: {}", song.album)),
+                ratatui::text::Line::from(format!("Duration: {}", song.duration_str)),
+            ]
+        } else {
+            vec![ratatui::text::Line::from("No song playing.")]
+        };
 
+        let now_playing_widget = ratatui::widgets::Paragraph::new(now_playing_text)
+            .block(Block::default().borders(Borders::ALL).title(" En Reproducción ").border_style(Style::default().fg(PIPBOY_GREEN)))
+            .style(Style::default().fg(PIPBOY_GREEN));
+
+        f.render_widget(now_playing_widget, left_chunks[0]);
+
+        // --- Queue (A Continuación) ---
         let items: Vec<ratatui::widgets::ListItem> = app
-            .radio_stations
+            .queue
             .iter()
-            .map(|i| ratatui::widgets::ListItem::new(ratatui::text::Line::from(i.as_str())))
+            .map(|song| {
+                ratatui::widgets::ListItem::new(ratatui::text::Line::from(vec![
+                    ratatui::text::Span::raw(format!("{} - ", song.title)),
+                    ratatui::text::Span::styled(&song.artist, Style::default().fg(crate::ui::theme::COLOR_YELLOW)),
+                ]))
+            })
             .collect();
 
-        let playlist_widget = ratatui::widgets::List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Radio Stations").border_style(Style::default().fg(PIPBOY_GREEN)))
+        let queue_widget = ratatui::widgets::List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(" A Continuación ").border_style(Style::default().fg(PIPBOY_GREEN)))
             .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED))
             .highlight_symbol(">> ");
 
         f.render_stateful_widget(
-            playlist_widget,
-            content_chunks[0],
+            queue_widget,
+            left_chunks[1],
             &mut app.radio_state
         );
 
@@ -148,22 +146,4 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Footer
     f.render_widget(components::footer::render(app), chunks[2]);
-
-    // Global Modals (Overlay)
-    if let crate::app::state::InputMode::SelectPlaylistToAdd = app.input_mode {
-        // Reuse the logic from db_playlist which happens to have the modal logic inside.
-        // Ideally we extract `draw_add_to_playlist_modal` to a public function.
-        // For this iteration, since I put the modal logic inside `draw_playlists`,
-        // I can call it with the full frame area, but it will try to draw the playlist UI too?
-        // Let's refactor db_playlist slightly in the next step or just duplicate the modal call here
-        // if I exposed it.
-        // Wait, I put the logic INSIDE `draw_playlists`. That function draws the split view.
-        // If I am in DATA tab, I want to see DATA tab + Modal.
-        // So I should extract the modal drawing.
-
-        components::db_playlist::draw_playlists(f, app, f.area());
-        // Note: This effectively redraws the playlist UI *over* the current tab which might be weird
-        // if we are in DATA tab, effectively switching context visually to Playlist tab temporarily.
-        // This is actually acceptable for a "Select Playlist" modal since it lists playlists!
-    }
 }

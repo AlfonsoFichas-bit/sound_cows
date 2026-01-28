@@ -12,9 +12,16 @@ fn format_time(duration: Duration) -> String {
     format!("{:02}:{:02}", minutes, seconds)
 }
 
+use ratatui::text::Span;
+
 pub fn render(app: &crate::app::state::App) -> Gauge<'_> {
     let mut ratio = 0.0;
     let mut label = String::from("00:00 / 00:00");
+    let mut title = String::from(" PROGRESS ");
+
+    if let Some(song) = &app.now_playing {
+        title = format!(" {} - {} ", song.artist, song.album);
+    }
 
     // Using the new helper from AudioPlayer to get accurate sync time (handles pause)
     if let Some(total) = app.player.total_duration {
@@ -30,7 +37,7 @@ pub fn render(app: &crate::app::state::App) -> Gauge<'_> {
     Gauge::default()
         .block(Block::default()
             .borders(Borders::ALL)
-            .title("PROGRESS")
+            .title(Span::styled(title, Style::default().fg(crate::ui::theme::COLOR_YELLOW)))
             .border_style(Style::default().fg(PIPBOY_GREEN))
             .style(Style::default().bg(PIPBOY_BG)))
         .gauge_style(Style::default().fg(PIPBOY_GREEN).bg(PIPBOY_DARK))

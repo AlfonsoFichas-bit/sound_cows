@@ -30,10 +30,6 @@ pub fn render_input(app: &App) -> Paragraph<'_> {
             ],
             Style::default().fg(PIPBOY_GREEN),
         ),
-        _ => (
-            vec![Span::raw("Press '/' to search.")],
-            Style::default().fg(PIPBOY_GREEN),
-        ),
     };
 
     let mut text = vec![Line::from(msg)];
@@ -52,11 +48,16 @@ pub fn render_input(app: &App) -> Paragraph<'_> {
         )
 }
 
-pub fn render_results(search_results: &Vec<(String, String)>, input_mode: &InputMode) -> List<'static> {
+use crate::app::state::Song;
+
+pub fn render_results(search_results: &Vec<Song>, input_mode: &InputMode) -> List<'static> {
     let items: Vec<ListItem> = search_results
         .iter()
-        .map(|(title, _url)| {
-            ListItem::new(vec![Line::from(Span::styled(title.clone(), Style::default().fg(PIPBOY_GREEN)))])
+        .map(|song| {
+            ListItem::new(vec![Line::from(vec![
+                Span::styled(format!("{} ", song.title), Style::default().fg(PIPBOY_GREEN)),
+                Span::styled(format!("({})", song.duration_str), Style::default().fg(COLOR_YELLOW))
+            ])])
         })
         .collect();
 

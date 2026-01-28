@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::path::Path;
 use std::thread;
 use std::sync::mpsc::Sender;
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
+use rodio::{Decoder, OutputStream, Sink, Source};
 use crate::scope::Matrix;
 use crate::app::state::AppEvent;
 use super::stream::{download_audio, search_audio};
@@ -12,6 +12,7 @@ use super::stream::{download_audio, search_audio};
 pub struct AudioPlayer {
     // We keep these alive
     _stream: Option<OutputStream>,
+    _stream_handle: Option<rodio::OutputStreamHandle>,
     sink: Option<Sink>,
 
     // Visualization data
@@ -37,6 +38,7 @@ impl AudioPlayer {
     pub fn new() -> Self {
         let mut player = AudioPlayer {
             _stream: None,
+            _stream_handle: None,
             sink: None,
             audio_data: vec![vec![0.0; 1024]; 2],
             sample_rate: 44100,
@@ -55,16 +57,45 @@ impl AudioPlayer {
     }
 
     fn init(&mut self) {
-        match OutputStreamBuilder::open_default_stream() {
-            Ok(stream) => {
-                let s = Sink::connect_new(&stream.mixer());
-                self._stream = Some(stream);
-                self.sink = Some(s);
+        match OutputStream::try_default() {
+            Ok((stream, stream_handle)) => {
+                match Sink::try_new(&stream_handle) {
+                    Ok(s) => {
+                        self._stream = Some(stream);
+                        self._stream_handle = Some(stream_handle);
+                        self.sink = Some(s);
+                    },
+                    Err(e) => self.error_message = Some(format!("Sink error: {}", e)),
+                }
             },
             Err(e) => self.error_message = Some(format!("Audio init error: {}", e)),
         }
     }
 
+    // Synchronous load (legacy / local)
+    #[allow(dead_code)]
+    pub fn load_source(&mut self, path_or_url: &str) {
+        if self.sink.is_none() {
+            return;
+        }
+
+        self.error_message = None;
+
+        let path = if path_or_url.starts_with("http") {
+            let temp_path = Path::new("stream_cache.mp3");
+            match download_audio(path_or_url, temp_path) {
+                Ok(_) => temp_path,
+                Err(e) => {
+                    self.error_message = Some(e);
+                    return;
+                }
+            }
+        } else {
+            Path::new(path_or_url)
+        };
+
+        self.play_file(path);
+    }
 
     // Async load wrapper
     pub fn load_source_async(url: String, tx: Sender<AppEvent>) {
@@ -84,8 +115,18 @@ impl AudioPlayer {
     pub fn search_async(query: String, tx: Sender<AppEvent>) {
         thread::spawn(move || {
             match search_audio(&query) {
-                Ok(results) => {
-                    let _ = tx.send(AppEvent::SearchFinished(results));
+                Ok(yt_results) => {
+                    // Convert YtDlpResult to Song
+                    let songs: Vec<crate::app::state::Song> = yt_results.into_iter().map(|r| {
+                        crate::app::state::Song {
+                            title: r.title,
+                            artist: r.artist.or(r.uploader).unwrap_or("Unknown".to_string()),
+                            album: r.album.unwrap_or("Unknown".to_string()),
+                            url: r.url,
+                            duration_str: r.duration_string.unwrap_or("00:00".to_string()),
+                        }
+                    }).collect();
+                    let _ = tx.send(AppEvent::SearchFinished(songs));
                 },
                 Err(e) => {
                     let _ = tx.send(AppEvent::SearchError(e));
@@ -141,37 +182,36 @@ impl AudioPlayer {
                                  // We need to consume the `source` we created? No, we can use it.
                                  // But we need a clone or reopen for Sink?
                                  // Rodio Sink takes ownership of Source.
-                                 if let Some(stream) = &self._stream {
-                                     let new_sink = Sink::connect_new(&stream.mixer());
-                                     new_sink.set_volume(self.volume);
-                                     new_sink.append(source); // Use the source directly! No collecting!
-                                     self.sink = Some(new_sink);
-                                     self.start_time = Some(Instant::now());
-                                     self.elapsed_when_paused = Duration::from_secs(0);
-                                     self.is_paused = false;
+                                 if let Some(handle) = &self._stream_handle {
+                                     if let Ok(new_sink) = Sink::try_new(handle) {
+                                         new_sink.set_volume(self.volume);
+                                         new_sink.append(source); // Use the source directly! No collecting!
+                                         self.sink = Some(new_sink);
+                                         self.start_time = Some(Instant::now());
+                                         self.elapsed_when_paused = Duration::from_secs(0);
+                                         self.is_paused = false;
+                                     }
                                  }
                              } else {
                                  // --- FULL LOAD MODE (Visualizer Active) ---
                                  self.is_streaming_mode = false;
 
-                                 // Try converting samples. rodio 0.21 might handle f32 conversion automatically
-                                 // or we need to convert manually. Assuming Decoder returns correct type or we can collect.
-                                 // If this fails compile, we know we need conversion.
-                                 let samples: Vec<f32> = source.collect();
+                                 let samples: Vec<f32> = source.convert_samples().collect(); // Expensive step!
                                  let total_samples = samples.len() / self.channels;
                                  self.total_duration = Some(Duration::from_secs_f64(total_samples as f64 / self.sample_rate as f64));
 
                                  // We consumed source, so reopen for sink
                                  if let Ok(file_play) = File::open(path) {
                                      if let Ok(source_play) = Decoder::new(BufReader::new(file_play)) {
-                                         if let Some(stream) = &self._stream {
-                                             let new_sink = Sink::connect_new(&stream.mixer());
-                                             new_sink.set_volume(self.volume);
-                                             new_sink.append(source_play);
-                                             self.sink = Some(new_sink);
-                                             self.start_time = Some(Instant::now());
-                                             self.elapsed_when_paused = Duration::from_secs(0);
-                                             self.is_paused = false;
+                                         if let Some(handle) = &self._stream_handle {
+                                             if let Ok(new_sink) = Sink::try_new(handle) {
+                                                 new_sink.set_volume(self.volume);
+                                                 new_sink.append(source_play);
+                                                 self.sink = Some(new_sink);
+                                                 self.start_time = Some(Instant::now());
+                                                 self.elapsed_when_paused = Duration::from_secs(0);
+                                                 self.is_paused = false;
+                                             }
                                          }
                                      }
                                  }
@@ -267,13 +307,5 @@ impl AudioPlayer {
 
     pub fn volume_down(&mut self) {
         self.set_volume(self.volume - 0.1);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        if let Some(sink) = &self.sink {
-            sink.empty()
-        } else {
-            true
-        }
     }
 }

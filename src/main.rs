@@ -7,12 +7,10 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
-use std::{io, path::Path};
-use anyhow::{Context, Result};
+use std::{error::Error, io, path::Path};
 
 mod app;
 mod audio;
-mod db;
 mod scope;
 mod ui;
 
@@ -20,26 +18,26 @@ use app::state::{App, InputMode, AppEvent};
 use scope::display::{update_value_f, update_value_i, DisplayMode};
 use audio::player::AudioPlayer;
 
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn Error>> {
     // Setup terminal
-    enable_raw_mode().context("Failed to enable raw mode")?;
+    enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).context("Failed to enter alternate screen")?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
+    let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
     let app = App::new();
     let res = run_app(&mut terminal, app);
 
     // Restore terminal
-    disable_raw_mode().context("Failed to disable raw mode")?;
+    disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
-    ).context("Failed to leave alternate screen")?;
-    terminal.show_cursor().context("Failed to show cursor")?;
+    )?;
+    terminal.show_cursor()?;
 
     if let Err(err) = res {
         println!("{:?}", err)
@@ -48,10 +46,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()>
+fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(), Box<dyn Error>>
 where <B as Backend>::Error: 'static {
     loop {
-        terminal.draw(|f| ui::layout::draw(f, &mut app)).map_err(|e| anyhow::anyhow!("Draw error: {}", e))?;
+        terminal.draw(|f| ui::layout::draw(f, &mut app)).map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Draw error: {}", e)))?;
 
         // Check for async events non-blockingly
         if let Ok(event) = app.event_rx.try_recv() {
@@ -59,7 +57,7 @@ where <B as Backend>::Error: 'static {
                 AppEvent::AudioLoaded(path) => {
                     app.is_loading = false;
                     app.player.play_file(Path::new(&path));
-                    app.loading_status = Some("Playing URL".to_string());
+                    app.loading_status = Some("Playing...".to_string());
                     app.current_tab = 4; // Switch to Radio
                 },
                 AppEvent::AudioError(e) => {
@@ -85,13 +83,8 @@ where <B as Backend>::Error: 'static {
             }
         }
 
-        if app.player.is_empty() && !app.player.is_paused {
-             app.player.toggle_pause(); // Stop the timer if audio finished
-             // Ideally we reset to start or load next song here
-        }
-
         if event::poll(std::time::Duration::from_millis(16))? {
-            let event = event::read().context("Event error")?;
+            let event = event::read().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Event error: {}", e)))?;
 
             if app.current_tab == 4 {
                 app.oscilloscope.handle(event.clone());
@@ -139,180 +132,8 @@ where <B as Backend>::Error: 'static {
                             KeyCode::Left if !key.modifiers.contains(KeyModifiers::SHIFT) => app.previous_tab(),
                             KeyCode::Right if !key.modifiers.contains(KeyModifiers::SHIFT) => app.next_tab(),
                             KeyCode::Tab => app.next_tab(),
-
-                            // Add to Playlist (Global for Normal Mode)
-                            KeyCode::Char('a') => {
-                                let song_info = if app.current_tab == 2 {
-                                     // In DATA tab: use selected search result
-                                     if let Some(selected_idx) = app.search_results_state.selected() {
-                                         app.search_results.get(selected_idx).cloned()
-                                     } else {
-                                         None
-                                     }
-                                } else {
-                                    // Default/Radio tab: Current playing?
-                                    // For now, let's strictly support adding from Search Results as "Radio"
-                                    // stations are hardcoded strings, not DB entries yet.
-                                    None
-                                };
-
-                                if let Some((title, url)) = song_info {
-                                    app.song_to_add = Some((title, url));
-
-                                    // Load playlists to select
-                                    if let Some(db) = &app.db {
-                                        if let Ok(playlists) = db.get_playlists() {
-                                            app.playlists = playlists;
-                                            app.playlist_state.select(Some(0));
-                                            app.input_mode = InputMode::SelectPlaylistToAdd;
-                                        }
-                                    }
-                                } else {
-                                     app.loading_status = Some("Select a song in Search results to add.".to_string());
-                                }
-                            },
-
-                            // Playlist specific normal mode
-                            KeyCode::Char('p') if app.current_tab == 1 => {
-                                app.input_mode = InputMode::PlaylistNameInput;
-                            },
-                            KeyCode::Enter if app.current_tab == 1 => {
-                                if let Some(selected_idx) = app.playlist_state.selected() {
-                                    if let Some(playlist) = app.playlists.get(selected_idx) {
-                                        app.viewing_playlist_id = Some(playlist.id);
-                                        // Load songs
-                                        if let Some(db) = &app.db {
-                                            if let Ok(songs) = db.get_songs(playlist.id) {
-                                                app.playlist_songs = songs;
-                                                app.playlist_songs_state.select(Some(0));
-                                                app.input_mode = InputMode::PlaylistNavigation;
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            KeyCode::Char('r') if app.current_tab == 1 => {
-                                // Refresh playlists
-                                if let Some(db) = &app.db {
-                                    if let Ok(playlists) = db.get_playlists() {
-                                        app.playlists = playlists;
-                                        if !app.playlists.is_empty() && app.playlist_state.selected().is_none() {
-                                             app.playlist_state.select(Some(0));
-                                        }
-                                    }
-                                }
-                            },
                             _ => {}
                         }
-                    },
-                    InputMode::PlaylistNameInput => {
-                         match key.code {
-                            KeyCode::Enter => {
-                                let name = app.playlist_input_name.clone();
-                                if !name.trim().is_empty() {
-                                     if let Some(db) = &app.db {
-                                         if let Err(e) = db.create_playlist(&name) {
-                                             app.loading_status = Some(format!("Error creating playlist: {}", e));
-                                         } else {
-                                             app.loading_status = Some(format!("Created playlist: {}", name));
-                                             // Refresh
-                                             if let Ok(playlists) = db.get_playlists() {
-                                                app.playlists = playlists;
-                                             }
-                                         }
-                                     }
-                                }
-                                app.playlist_input_name.clear();
-                                app.input_mode = InputMode::Normal;
-                            },
-                            KeyCode::Esc => {
-                                app.playlist_input_name.clear();
-                                app.input_mode = InputMode::Normal;
-                            },
-                            KeyCode::Backspace => {
-                                app.playlist_input_name.pop();
-                            },
-                            KeyCode::Char(c) => {
-                                app.playlist_input_name.push(c);
-                            },
-                            _ => {}
-                         }
-                    },
-                    InputMode::SelectPlaylistToAdd => {
-                        match key.code {
-                            KeyCode::Esc => {
-                                app.input_mode = InputMode::Normal;
-                                app.song_to_add = None;
-                            },
-                            KeyCode::Down => {
-                                let i = match app.playlist_state.selected() {
-                                    Some(i) => if i >= app.playlists.len().saturating_sub(1) { 0 } else { i + 1 },
-                                    None => 0,
-                                };
-                                app.playlist_state.select(Some(i));
-                            },
-                            KeyCode::Up => {
-                                let i = match app.playlist_state.selected() {
-                                    Some(i) => if i == 0 { app.playlists.len().saturating_sub(1) } else { i - 1 },
-                                    None => 0,
-                                };
-                                app.playlist_state.select(Some(i));
-                            },
-                            KeyCode::Enter => {
-                                if let Some(idx) = app.playlist_state.selected() {
-                                    if let Some(playlist) = app.playlists.get(idx) {
-                                        if let Some((title, url)) = &app.song_to_add {
-                                            if let Some(db) = &app.db {
-                                                if let Err(e) = db.add_song(playlist.id, url, title) {
-                                                    app.loading_status = Some(format!("Error adding song: {}", e));
-                                                } else {
-                                                    app.loading_status = Some(format!("Added '{}' to '{}'", title, playlist.name));
-                                                    app.input_mode = InputMode::Normal;
-                                                    app.song_to_add = None;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            _ => {}
-                        }
-                    },
-                    InputMode::PlaylistNavigation => {
-                         match key.code {
-                            KeyCode::Down => {
-                                let i = match app.playlist_songs_state.selected() {
-                                    Some(i) => if i >= app.playlist_songs.len().saturating_sub(1) { 0 } else { i + 1 },
-                                    None => 0,
-                                };
-                                app.playlist_songs_state.select(Some(i));
-                            },
-                            KeyCode::Up => {
-                                let i = match app.playlist_songs_state.selected() {
-                                    Some(i) => if i == 0 { app.playlist_songs.len().saturating_sub(1) } else { i - 1 },
-                                    None => 0,
-                                };
-                                app.playlist_songs_state.select(Some(i));
-                            },
-                            KeyCode::Esc => {
-                                app.input_mode = InputMode::Normal;
-                                app.viewing_playlist_id = None;
-                                app.playlist_songs.clear();
-                            },
-                            KeyCode::Enter => {
-                                // Play selected song
-                                if let Some(idx) = app.playlist_songs_state.selected() {
-                                    if let Some(song) = app.playlist_songs.get(idx).cloned() {
-                                         app.loading_status = Some(format!("Playing: {}...", song.title));
-                                         app.is_loading = true;
-
-                                         let tx = app.event_tx.clone();
-                                         AudioPlayer::load_source_async(song.url, tx);
-                                    }
-                                }
-                            },
-                             _ => {}
-                         }
                     },
                     InputMode::Editing => {
                         match key.code {
@@ -378,12 +199,14 @@ where <B as Backend>::Error: 'static {
                                     None
                                 };
 
-                                if let Some((title, url)) = selected_track {
-                                    app.loading_status = Some(format!("Downloading: {}...", title));
+                                if let Some(song) = selected_track {
+                                    app.loading_status = Some(format!("Downloading: {}...", song.title));
                                     app.is_loading = true;
 
+                                    app.now_playing = Some(song.clone());
+
                                     let tx = app.event_tx.clone();
-                                    AudioPlayer::load_source_async(url, tx);
+                                    AudioPlayer::load_source_async(song.url, tx);
 
                                     app.input_mode = InputMode::Normal;
                                 }
