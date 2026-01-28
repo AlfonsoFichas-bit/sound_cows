@@ -57,7 +57,7 @@ pub struct App {
 
 impl App {
     pub fn new() -> App {
-        let mut radio_state = ListState::default();
+        let radio_state = ListState::default();
         // radio_state.select(Some(0)); // Start at top of queue
 
         let player = AudioPlayer::new();

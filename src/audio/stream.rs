@@ -6,11 +6,13 @@ use serde_derive::Deserialize; // We need serde for JSON parsing
 pub struct YtDlpResult {
     pub title: String,
     pub url: String, // Or webpage_url
+    #[allow(dead_code)]
     pub webpage_url: Option<String>,
     pub artist: Option<String>,
     pub uploader: Option<String>, // Fallback for artist
     pub album: Option<String>,
     pub duration_string: Option<String>, // "3:45"
+    #[allow(dead_code)]
     pub duration: Option<f64>, // seconds
 }
 
