@@ -10,18 +10,29 @@ pub enum InputMode {
     SearchResults,
 }
 
+#[derive(Clone, Debug)]
+pub struct Song {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub url: String,
+    pub duration_str: String,
+}
+
 // Events sent from background threads to the main UI thread
 pub enum AppEvent {
     AudioLoaded(String), // Path to file
     AudioError(String),
-    SearchFinished(Vec<(String, String)>), // Results
+    SearchFinished(Vec<Song>), // Results with full metadata
     SearchError(String),
 }
 
 pub struct App {
     pub current_tab: usize,
     pub radio_state: ListState,
-    pub radio_stations: Vec<String>,
+    // queue is the new 'radio_stations' list
+    pub queue: std::collections::VecDeque<Song>,
+    pub now_playing: Option<Song>,
 
     // Components
     pub player: AudioPlayer,
@@ -36,7 +47,7 @@ pub struct App {
     pub is_loading: bool, // General loading spinner flag
 
     // Search Results
-    pub search_results: Vec<(String, String)>,
+    pub search_results: Vec<Song>,
     pub search_results_state: ListState,
 
     // Async Communication
@@ -46,12 +57,10 @@ pub struct App {
 
 impl App {
     pub fn new() -> App {
-        let mut radio_state = ListState::default();
-        radio_state.select(Some(3)); // Radio Freedom
+        let radio_state = ListState::default();
+        // radio_state.select(Some(0)); // Start at top of queue
 
         let player = AudioPlayer::new();
-        // Load default sync for now, async search will use the channel
-        // player.load_source("audio.mp3"); // Removed default local file loading
 
         let graph_config = GraphConfig {
             samples: 200,
@@ -70,18 +79,8 @@ impl App {
         App {
             current_tab: 4, // RADIO tab
             radio_state,
-            radio_stations: vec![
-                "Classical Radio".to_string(),
-                "Diamond City Radio".to_string(),
-                "Nuka-Cola Family Radio".to_string(),
-                "Radio Freedom".to_string(),
-                "Distress Signal".to_string(),
-                "Distress Signal".to_string(),
-                "Distress Signal".to_string(),
-                "Emergency Frequency RJ1138".to_string(),
-                "Military Frequency AF95".to_string(),
-                "Silver Shroud Radio".to_string(),
-            ],
+            queue: std::collections::VecDeque::new(),
+            now_playing: None,
             player,
             oscilloscope: Oscilloscope::default(),
             graph_config,
@@ -98,9 +97,10 @@ impl App {
     }
 
     pub fn next_station(&mut self) {
+        if self.queue.is_empty() { return; }
         let i = match self.radio_state.selected() {
             Some(i) => {
-                if i >= self.radio_stations.len() - 1 {
+                if i >= self.queue.len() - 1 {
                     0
                 } else {
                     i + 1
@@ -112,10 +112,11 @@ impl App {
     }
 
     pub fn previous_station(&mut self) {
+        if self.queue.is_empty() { return; }
         let i = match self.radio_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.radio_stations.len() - 1
+                    self.queue.len() - 1
                 } else {
                     i - 1
                 }

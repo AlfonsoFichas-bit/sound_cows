@@ -6,7 +6,14 @@ use serde_derive::Deserialize; // We need serde for JSON parsing
 pub struct YtDlpResult {
     pub title: String,
     pub url: String, // Or webpage_url
+    #[allow(dead_code)]
     pub webpage_url: Option<String>,
+    pub artist: Option<String>,
+    pub uploader: Option<String>, // Fallback for artist
+    pub album: Option<String>,
+    pub duration_string: Option<String>, // "3:45"
+    #[allow(dead_code)]
+    pub duration: Option<f64>, // seconds
 }
 
 pub fn download_audio(url: &str, output_path: &Path) -> Result<(), String> {
@@ -32,7 +39,8 @@ pub fn download_audio(url: &str, output_path: &Path) -> Result<(), String> {
     }
 }
 
-pub fn search_audio(query: &str) -> Result<Vec<(String, String)>, String> {
+// Return full struct instead of tuple
+pub fn search_audio(query: &str) -> Result<Vec<YtDlpResult>, String> {
     // ytsearch5:query means "search youtube for query and get 5 results"
     let search_query = format!("ytsearch5:{}", query);
 
@@ -52,8 +60,7 @@ pub fn search_audio(query: &str) -> Result<Vec<(String, String)>, String> {
                 // yt-dlp outputs one JSON object per line
                 for line in stdout.lines() {
                     if let Ok(entry) = serde_json::from_str::<YtDlpResult>(line) {
-                        let url = entry.webpage_url.unwrap_or(entry.url);
-                        results.push((entry.title, url));
+                        results.push(entry);
                     }
                 }
                 Ok(results)

@@ -57,7 +57,7 @@ where <B as Backend>::Error: 'static {
                 AppEvent::AudioLoaded(path) => {
                     app.is_loading = false;
                     app.player.play_file(Path::new(&path));
-                    app.loading_status = Some("Playing URL".to_string());
+                    app.loading_status = Some("Playing...".to_string());
                     app.current_tab = 4; // Switch to Radio
                 },
                 AppEvent::AudioError(e) => {
@@ -199,12 +199,14 @@ where <B as Backend>::Error: 'static {
                                     None
                                 };
 
-                                if let Some((title, url)) = selected_track {
-                                    app.loading_status = Some(format!("Downloading: {}...", title));
+                                if let Some(song) = selected_track {
+                                    app.loading_status = Some(format!("Downloading: {}...", song.title));
                                     app.is_loading = true;
 
+                                    app.now_playing = Some(song.clone());
+
                                     let tx = app.event_tx.clone();
-                                    AudioPlayer::load_source_async(url, tx);
+                                    AudioPlayer::load_source_async(song.url, tx);
 
                                     app.input_mode = InputMode::Normal;
                                 }

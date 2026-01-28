@@ -50,16 +50,58 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let content_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(65),  // Left panel (radio list)
+                Constraint::Percentage(65),  // Left panel (Now Playing + Queue)
                 Constraint::Percentage(35),  // Right panel (waveform + controls)
             ])
             .split(chunks[1]);
 
-        // Playlist
-        let playlist_widget = components::playlist::render(&app.radio_stations);
+        // Left Panel Split (Now Playing / Queue)
+        let left_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(30), // Now Playing
+                Constraint::Percentage(70), // Queue
+            ])
+            .split(content_chunks[0]);
+
+        // --- Now Playing ---
+        let now_playing_text = if let Some(song) = &app.now_playing {
+            vec![
+                ratatui::text::Line::from(ratatui::text::Span::styled(format!("Title: {}", song.title), Style::default().add_modifier(ratatui::style::Modifier::BOLD).fg(crate::ui::theme::COLOR_YELLOW))),
+                ratatui::text::Line::from(format!("Artist: {}", song.artist)),
+                ratatui::text::Line::from(format!("Album: {}", song.album)),
+                ratatui::text::Line::from(format!("Duration: {}", song.duration_str)),
+            ]
+        } else {
+            vec![ratatui::text::Line::from("No song playing.")]
+        };
+
+        let now_playing_widget = ratatui::widgets::Paragraph::new(now_playing_text)
+            .block(Block::default().borders(Borders::ALL).title(" En Reproducción ").border_style(Style::default().fg(PIPBOY_GREEN)))
+            .style(Style::default().fg(PIPBOY_GREEN));
+
+        f.render_widget(now_playing_widget, left_chunks[0]);
+
+        // --- Queue (A Continuación) ---
+        let items: Vec<ratatui::widgets::ListItem> = app
+            .queue
+            .iter()
+            .map(|song| {
+                ratatui::widgets::ListItem::new(ratatui::text::Line::from(vec![
+                    ratatui::text::Span::raw(format!("{} - ", song.title)),
+                    ratatui::text::Span::styled(&song.artist, Style::default().fg(crate::ui::theme::COLOR_YELLOW)),
+                ]))
+            })
+            .collect();
+
+        let queue_widget = ratatui::widgets::List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(" A Continuación ").border_style(Style::default().fg(PIPBOY_GREEN)))
+            .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED))
+            .highlight_symbol(">> ");
+
         f.render_stateful_widget(
-            playlist_widget,
-            content_chunks[0],
+            queue_widget,
+            left_chunks[1],
             &mut app.radio_state
         );
 

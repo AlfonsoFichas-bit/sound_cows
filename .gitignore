@@ -3,4 +3,9 @@
 # Editor
 .idea/
 .vscode/
-audio.mp3
+
+# Audio
+*.mp3
+
+# Database
+*.db
