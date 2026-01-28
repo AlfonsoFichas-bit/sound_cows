@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::path::Path;
 use std::thread;
 use std::sync::mpsc::Sender;
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
+use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source, Sample};
 use crate::scope::Matrix;
 use crate::app::state::AppEvent;
 use super::stream::{download_audio, search_audio};
